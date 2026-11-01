@@ -51,7 +51,8 @@ void main() {
     test('解析样例行：任务名 / 创建 / 结束 / 完成 / 备注 / 标签', () {
       const raw = '# 工作\n'
           '\n'
-          '- [ ] 任务名 创建 2026-10-11,7:00 结束 2026-10-12,18:00 这是备注。 ##这是标签1 ##这是标签2\n';
+          '- [ ] 任务名 %%创建 2026-10-11,7:00 结束 2026-10-12,18:00 完成 2026-10-12,15:19%% '
+          '这是备注。  ##这是标签1 ##这是标签2\n';
       final doc = const TaskDocumentCodec().parse(raw);
       expect(doc.warnings, isEmpty);
       expect(doc.tasks, hasLength(1));
@@ -59,10 +60,28 @@ void main() {
       expect(t.title, '任务名');
       expect(t.created, DateTime(2026, 10, 11, 7, 0));
       expect(t.deadline, DateTime(2026, 10, 12, 18, 0));
-      expect(t.completed, isFalse);
+      expect(t.completedAt, DateTime(2026, 10, 12, 15, 19));
+      expect(t.completed, isTrue);
       expect(t.description, '这是备注。');
       expect(t.tags, ['这是标签1', '这是标签2']);
       expect(t.section, '工作');
+    });
+
+    test('旧格式（没有 %% 包裹、带「备注」二字）照样读得出来', () {
+      const raw = '- [ ] 任务名 创建 2026-10-11,7:00 结束 2026-10-12,18:00 备注 这是备注。 ##标签\n';
+      final t = const TaskDocumentCodec().parse(raw).tasks.single;
+      expect(t.title, '任务名');
+      expect(t.deadline, DateTime(2026, 10, 12, 18, 0));
+      expect(t.description, '这是备注。');
+      expect(t.tags, ['标签']);
+    });
+
+    test('结束/完成漏写到 %% 外面也认（半新半旧的行）', () {
+      const raw = '- [ ] 任务名 %%创建 2026-10-11,7:00%% 结束 2026-10-12,18:00 这是备注。\n';
+      final t = const TaskDocumentCodec().parse(raw).tasks.single;
+      expect(t.title, '任务名');
+      expect(t.deadline, DateTime(2026, 10, 12, 18, 0));
+      expect(t.description, '这是备注。');
     });
 
     test('复选框 [x] 与「完成」时刻都认，且 `##` 小节标题不会被当标签', () {
@@ -106,10 +125,11 @@ void main() {
     test('行渲染 → 解析 往返稳定（人看到的行 = 内核指纹的输入）', () {
       final task = makeTask();
       final line = TaskDocumentCodec.encodeLine(task);
-      expect(line, startsWith('- [ ] 完成 Agent 调度论文阅读 创建 2026-10-07,15:30'));
-      expect(line, contains('结束 2026-10-08,18:00'));
-      expect(line, contains('备注 阅读论文并整理笔记。'));
-      expect(line, endsWith('##工作'));
+      expect(
+          line,
+          '- [ ] 完成 Agent 调度论文阅读 '
+          '%%创建 2026-10-07,15:30 结束 2026-10-08,18:00%% '
+          '阅读论文并整理笔记。 ##工作');
 
       final parsed = const TaskDocumentCodec().parse(line).tasks.single;
       expect(parsed.title, task.title);
@@ -154,7 +174,8 @@ void main() {
     await repo.save(makeTask());
 
     final human = doc().readAsStringSync();
-    expect(human, contains('- [ ] 完成 Agent 调度论文阅读 创建 2026-10-07,15:30'));
+    expect(
+        human, contains('- [ ] 完成 Agent 调度论文阅读 %%创建 2026-10-07,15:30'));
     // 内核字段一个都不许出现在人类文档里
     for (final key in ['work_intensity', 'priority', 'time_slack', 'digest']) {
       expect(human, isNot(contains(key)));
@@ -404,28 +425,68 @@ status: active
         contains('completed_at: 2026-10-12T16:05'));
   });
 
-  test('软删除：内核文件进 .gtd/.trash/，人类文档那行被注释掉', () async {
+  test('软删除：内核文件进 .gtd/.trash/，人类文档里那一行整行拿掉', () async {
     await repo.save(makeTask());
     await repo.loadAll();
     await repo.moveToTrash('task-001');
 
     expect(kernel('task-001').existsSync(), isFalse);
-    expect(File('${tmp.path}/.gtd/.trash/task-001.md').existsSync(), isTrue);
-    final human = doc().readAsStringSync();
-    expect(human, contains('<!-- gtd:deleted task-001 -->'));
-    expect(human, contains('%%- [ ] 完成 Agent 调度论文阅读'));
-    expect(human, contains('完成 Agent 调度论文阅读')); // 内容还在，可捞
+    final trashFile = File('${tmp.path}/.gtd/.trash/task-001.md');
+    expect(trashFile.existsSync(), isTrue);
 
-    // 被注释掉的行不算任务
+    // 原行与原行号住在回收站文件里，不在人类文档里留痕迹
+    final trashRaw = trashFile.readAsStringSync();
+    expect(trashRaw, contains('deleted_line: - [ ] 完成 Agent 调度论文阅读'));
+    expect(trashRaw, contains('deleted_line_no:'));
+    final human = doc().readAsStringSync();
+    expect(human, isNot(contains('gtd:deleted')));
+    expect(human, isNot(contains('完成 Agent 调度论文阅读')));
+
+    // 拿掉的行不算任务，也不留空行
     expect(await repo.loadAll(), isEmpty);
+    expect(human.trimRight(), '# 工作');
 
     final trash = await repo.loadTrash();
     expect(trash.map((t) => t.title), ['完成 Agent 调度论文阅读']);
+    expect(trash.single.description, '阅读论文并整理笔记。');
+    expect(trash.single.tags, ['工作']);
 
     await repo.restore('task-001');
     expect(kernel('task-001').existsSync(), isTrue);
-    expect(doc().readAsStringSync(), isNot(contains('gtd:deleted')));
-    expect((await repo.loadAll()).single.title, '完成 Agent 调度论文阅读');
+    expect(trashFile.existsSync(), isFalse);
+    expect(kernel('task-001').readAsStringSync(), isNot(contains('deleted_line')));
+    final restored = (await repo.loadAll()).single;
+    expect(restored.title, '完成 Agent 调度论文阅读');
+    expect(restored.description, '阅读论文并整理笔记。');
+    // 原行一字不动写回 → 指纹不变 → 直接按第 1 档配对，内核属性没丢
+    expect(restored.estimatedWork, 120);
+  });
+
+  test('删除与恢复：行拿掉后不留空行，恢复插回原位', () async {
+    doc().writeAsStringSync('# 工作\n'
+        '\n'
+        '- [ ] 甲 %%创建 2026-10-11,07:00%% ##工作\n'
+        '- [ ] 乙 %%创建 2026-10-11,07:05%% ##工作\n'
+        '- [ ] 丙 %%创建 2026-10-11,07:10%% ##工作\n');
+    await repo.loadAll();
+    final ids = {
+      for (final t in await repo.loadAll()) t.title: t.id,
+    };
+
+    // 删中间那条：文档里只剩下甲乙外的两条，且没多出空行
+    await repo.moveToTrash(ids['乙']!);
+    expect(doc().readAsStringSync(),
+        '# 工作\n\n- [ ] 甲 %%创建 2026-10-11,07:00%% ##工作\n- [ ] 丙 %%创建 2026-10-11,07:10%% ##工作\n');
+
+    await repo.restore(ids['乙']!);
+    expect(
+        doc().readAsStringSync(),
+        '# 工作\n'
+        '\n'
+        '- [ ] 甲 %%创建 2026-10-11,07:00%% ##工作\n'
+        '- [ ] 乙 %%创建 2026-10-11,07:05%% ##工作\n'
+        '- [ ] 丙 %%创建 2026-10-11,07:10%% ##工作\n');
+    expect((await repo.loadAll()).map((t) => t.title), ['甲', '乙', '丙']);
   });
 
   test('迁移：旧「一任务一文件」自动转双文档，旧文件进 legacy-tasks/', () async {
@@ -447,7 +508,8 @@ created: 2026-10-07T15:30
     expect(loaded.title, '完成论文阅读');
     expect(loaded.importance, 4);
     expect(doc().existsSync(), isTrue);
-    expect(doc().readAsStringSync(), contains('- [ ] 完成论文阅读 创建 2026-10-07,15:30'));
+    expect(doc().readAsStringSync(),
+        contains('- [ ] 完成论文阅读 %%创建 2026-10-07,15:30 结束 2026-10-08,18:00%%'));
     expect(kernel('task-001').readAsStringSync(), contains('work_intensity: 120'));
     // 旧文件不再被当成任务，且挪进了存档目录
     expect(File('${tmp.path}/task-001.md').existsSync(), isFalse);

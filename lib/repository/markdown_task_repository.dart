@@ -352,84 +352,128 @@ class MarkdownTaskRepository implements TaskRepository {
     _digestToId.removeWhere((_, v) => v == id);
   }
 
-  // ---- 软删除三件套（D11）：内核文件进 .gtd/.trash/，人类文档那一行注释掉 ----
+  // ---- 软删除三件套（D11）：内核文件进 .gtd/.trash/，人类文档那一行整行拿掉 ----
+
+  /// 回收站文件里的两个专用键（[docs/formats/sidecar.md]）：原行 + 原行号。
+  /// 直接手写手读，不进 `Task.metadata`、不在登记表里——它们描述的是
+  /// "这个文件躺在回收站里"，不是任务事实。
+  static const String _deletedLineKey = 'deleted_line';
+  static const String _deletedLineNoKey = 'deleted_line_no';
 
   @override
   Future<void> moveToTrash(String id) async {
     final f = File(_sidecarPathOf(id));
     if (!f.existsSync()) return;
     if (!_trashDir.existsSync()) _trashDir.createSync(recursive: true);
-    await f.rename(_trashPathOf(id));
-    _lastSeenSidecar.remove(id);
 
-    // 人类文档里那一行 → 注释掉（Obsidian 阅读模式下看不见，源文件里可捞回）。
-    // 用 Obsidian 原生的 `%%…%%` 行内注释，不碰复选框语法本身。
+    // 人类文档里那一行：**整行拿走**，原行与原行号写进回收站文件本身。
+    // 早先的做法是把它用 `%%…%%` 注释掉留在原地——阅读视图看不见，于是每删
+    // 一条就多一段看不见的空白，攒多了整篇都是空档。
     final document = await _readDocument(documentCodec);
     final index = _findLine(document, id);
+    final line = index == null ? null : document.lines[index].replaceAll('\r', '');
+
+    final raw = await f.readAsString();
+    await File(_trashPathOf(id)).writeAsString(_withTrashKeys(raw, line, index));
+    await f.delete();
+
+    _lastSeenSidecar.remove(id);
+    _idToDigest.remove(id);
+    _digestToId.removeWhere((_, v) => v == id);
+
     if (index == null) {
       _notices.add('$id: 已移入回收站，但 $documentName 里没有找到对应的行');
       return;
     }
-    final line = document.lines[index];
-    if (line.trimLeft().startsWith('%%')) return;
-    final indent = line.substring(0, line.length - line.trimLeft().length);
-    await _writeDocument(
-      document,
-      index,
-      '$indent$_deletedPrefix$id --> %%${line.trim()}%%',
-    );
+    await _removeLine(document, index);
   }
 
   @override
   Future<List<Task>> loadTrash() async {
     final tasks = <Task>[];
     if (!_trashDir.existsSync()) return tasks;
+
+    // 名字与备注从回收站文件自己身上读（`deleted_line`）；老版本的回收站文件
+    // 没有这个键，退回"去人类文档里找注释行"。
+    final legacy = <Task>[];
     for (final entity in _trashDir.listSync()) {
       if (entity is! File || !entity.path.endsWith('.md')) continue;
       final sidecar = await _readSidecarFrom(entity.path);
-      if (sidecar != null) tasks.add(sidecar);
+      if (sidecar == null) continue;
+      final raw = await entity.readAsString();
+      final line = _parseOneLine(_trashValue(raw, _deletedLineKey));
+      if (line == null) {
+        tasks.add(sidecar);
+        legacy.add(sidecar);
+        continue;
+      }
+      tasks.add(_merge(line: line, id: sidecar.id, sidecar: sidecar));
     }
-    // 人类文档里被注释掉的那行才是"人看到的名字"，合并回来再返回
-    final document = await _readDocument(documentCodec);
-    final deleted = <String>[];
-    for (final line in document.lines) {
-      if (!line.contains(_deletedPrefix)) continue;
-      final at = line.indexOf('%%');
-      final end = line.lastIndexOf('%%');
-      if (at < 0 || end <= at) continue;
-      deleted.add(line.substring(at + 2, end).trim());
-    }
-    if (deleted.isNotEmpty) {
-      // 回收站里任务与"被注释掉的行"都按创建先后排，一一对应；
-      // 数量不等时宁可不合并（保留内核属性原文），也不猜错。
-      final lines = documentCodec.parse(deleted.join('\n')).tasks;
-      if (lines.length == tasks.length) {
-        for (var i = 0; i < tasks.length; i++) {
-          tasks[i] = _merge(line: lines[i], id: tasks[i].id, sidecar: tasks[i]);
+
+    if (legacy.isNotEmpty) {
+      final document = await _readDocument(documentCodec);
+      final bodies = <String>[];
+      for (final line in document.lines) {
+        if (!line.contains(_deletedPrefix)) continue;
+        final at = line.indexOf(TaskDocumentCodec.metaDelim);
+        final end = line.lastIndexOf(TaskDocumentCodec.metaDelim);
+        if (at < 0 || end <= at) continue;
+        bodies.add(line.substring(at + 2, end).trim());
+      }
+      // 回收站里任务与"被注释掉的行"都按创建先后排，数量相等才一一对应；
+      // 不等宁可保留内核属性原文，也不猜错。
+      final lines = documentCodec.parse(bodies.join('\n')).tasks;
+      if (lines.length == legacy.length) {
+        for (var i = 0; i < legacy.length; i++) {
+          final at = tasks.indexWhere((t) => t.id == legacy[i].id);
+          if (at < 0) continue;
+          tasks[at] = _merge(line: lines[i], id: legacy[i].id, sidecar: legacy[i]);
         }
       }
     }
+
     tasks.sort((a, b) => a.created.compareTo(b.created));
     return tasks;
   }
 
   @override
   Future<void> restore(String id) async {
-    final f = File(_trashPathOf(id));
-    if (f.existsSync()) {
-      await _kernelDir.create(recursive: true);
-      await f.rename(_sidecarPathOf(id));
-    }
+    final trashFile = File(_trashPathOf(id));
+    if (!trashFile.existsSync()) return;
+    final raw = await trashFile.readAsString();
+    final original = _trashValue(raw, _deletedLineKey);
+    final lineNo = int.tryParse(_trashValue(raw, _deletedLineNoKey) ?? '');
+
+    await _kernelDir.create(recursive: true);
+    await File(_sidecarPathOf(id)).writeAsString(_stripTrashKeys(raw));
+    await trashFile.delete();
+
     final document = await _readDocument(documentCodec);
-    final index = document.lines.indexWhere(
-      (l) => l.contains(_deletedPrefix) && l.contains(id),
-    );
-    if (index < 0) return;
-    final restored = _restoreDeletedLine(document.lines[index]);
-    if (restored == null) return;
-    final old = document.lines[index];
-    final indent = old.substring(0, old.length - old.trimLeft().length);
-    await _writeDocument(document, index, '$indent$restored');
+    // 原行一字不动地插回原位：指纹不变，两条文档照旧走第 1 档配对。
+    final line = original ??
+        () {
+          // 老版本：人类文档里那行还躺在注释里
+          for (final l in document.lines) {
+            if (l.contains(_deletedPrefix) && l.contains(id)) {
+              return _restoreDeletedLine(l);
+            }
+          }
+          return null;
+        }();
+    if (line == null || line.isEmpty) return;
+
+    if (lineNo == null || lineNo >= document.lines.length) {
+      // 行号丢了/文档被改短：退化为"按第一个标签找同名小节，追加到末尾"
+      final parsed = _parseOneLine(line);
+      await _insertLine(
+        line,
+        parsed == null || parsed.tags.isEmpty ? null : parsed.tags.first,
+      );
+      return;
+    }
+    final lines = List<String>.from(document.lines)
+      ..insert(lineNo.clamp(0, document.lines.length), line);
+    await _docFile.writeAsString(document.join(lines));
   }
 
   @override
@@ -439,13 +483,77 @@ class MarkdownTaskRepository implements TaskRepository {
         if (entity is File) await entity.delete();
       }
     }
-    // 人类文档里被注释掉的删除行：一并真删
+    // 老版本留在人类文档里的注释行：一并真删
     final document = await _readDocument(documentCodec);
     final kept =
         document.lines.where((l) => !l.contains(_deletedPrefix)).toList();
     if (kept.length != document.lines.length) {
       await _docFile.writeAsString(document.join(kept));
     }
+  }
+
+  /// 往回收站文件的 frontmatter 末尾插那两个键。没有 frontmatter 就原样返回
+  /// （认不出结构时不硬塞，恢复时退化为按标签追加）。
+  static String _withTrashKeys(String raw, String? line, int? index) {
+    final insert = <String>[
+      if (line != null) '$_deletedLineKey: $line',
+      if (index != null) '$_deletedLineNoKey: $index',
+    ];
+    if (insert.isEmpty) return raw;
+    final lines = raw.split('\n');
+    if (lines.isEmpty || lines.first.trim() != '---') return raw;
+    var close = -1;
+    for (var i = 1; i < lines.length; i++) {
+      if (lines[i].trim() == '---') {
+        close = i;
+        break;
+      }
+    }
+    if (close < 0) return raw;
+    final cr = lines[close].endsWith('\r') ? '\r' : '';
+    lines.insertAll(close, [for (final l in insert) '$l$cr']);
+    return lines.join('\n');
+  }
+
+  /// 把 [_withTrashKeys] 插的两行摘掉（文件搬回 `.gtd/` 时用）。
+  static String _stripTrashKeys(String raw) {
+    final kept = raw.split('\n').where((l) {
+      final t = l.trim();
+      return !t.startsWith('$_deletedLineKey:') &&
+          !t.startsWith('$_deletedLineNoKey:');
+    });
+    return kept.join('\n');
+  }
+
+  /// 从回收站文件的原文里取一个键的值（只读文本，不走 codec）。
+  static String? _trashValue(String raw, String key) {
+    for (final line in raw.split('\n')) {
+      final t = line.trim();
+      if (!t.startsWith('$key:')) continue;
+      final value = t.substring(key.length + 1).trim();
+      return value.isEmpty ? null : value;
+    }
+    return null;
+  }
+
+  /// 单行文本 → 任务行；认不出返回 null。
+  TaskLine? _parseOneLine(String? line) {
+    if (line == null || line.trim().isEmpty) return null;
+    final parsed = documentCodec.parse(line).tasks;
+    return parsed.isEmpty ? null : parsed.first;
+  }
+
+  /// 从人类文档里拿掉一行，并把它造成的连续空行收缩成一个。
+  /// 只在删行这一处收缩：平时应用绝不动别人的空行。
+  Future<void> _removeLine(TaskDocument document, int index) async {
+    final lines = List<String>.from(document.lines)..removeAt(index);
+    if (index > 0 &&
+        index < lines.length &&
+        lines[index - 1].trim().isEmpty &&
+        lines[index].trim().isEmpty) {
+      lines.removeAt(index - 1);
+    }
+    await _docFile.writeAsString(document.join(lines));
   }
 
   @override
@@ -520,11 +628,14 @@ class MarkdownTaskRepository implements TaskRepository {
   /// 新任务追加到"第一个标签对应的小节"末尾；没有这个小节就补一个小节。
   /// 这是**有意的最小策略**：位置只在新任务落地时决定一次，之后不再重排
   /// （人在 Obsidian 里怎么摆就怎么摆，应用不抢方向盘）。
-  Future<void> _appendLine(Task task) async {
+  Future<void> _appendLine(Task task) =>
+      _insertLine(TaskDocumentCodec.encodeLine(task),
+          task.tags.isEmpty ? null : task.tags.first);
+
+  /// 按 [section] 找同名小节、插到它末尾；找不到就在文末新开一节。
+  Future<void> _insertLine(String line, String? section) async {
     final document = await _readDocument(documentCodec);
     final lines = List<String>.from(document.lines);
-    final line = TaskDocumentCodec.encodeLine(task);
-    final section = task.tags.isEmpty ? null : task.tags.first;
 
     var insertAt = -1;
     if (section != null) {
@@ -551,7 +662,9 @@ class MarkdownTaskRepository implements TaskRepository {
     while (lines.isNotEmpty && lines.last.trim().isEmpty) {
       lines.removeLast();
     }
-    lines.add('');
+    // 空文档别在开头留一个空行（`parse('')` 切出来是一个空元素）
+    if (lines.every((l) => l.trim().isEmpty)) lines.clear();
+    if (lines.isNotEmpty) lines.add('');
     if (section != null) {
       lines.add('# $section');
       lines.add('');

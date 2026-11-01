@@ -36,11 +36,17 @@ class _Stamp {
 /// 行格式（关键字锚定，字段顺序自由）：
 ///
 /// ```text
-/// - [ ] 任务名 创建 <日期,时间> 结束 <日期,时间> 完成 <日期,时间> 备注… ##标签1 ##标签2
+/// - [ ] 任务名 %%创建 <日期,时间> 结束 <日期,时间> 完成 <日期,时间>%% 备注… ##标签1 ##标签2
 /// ```
 ///
 /// - **就是任务行的判定**：行首为 `- [ ]` / `- [x]` 复选框，且行内含 `创建`
 ///   关键字（创建日期必填——它是"这是一条任务"的锚点，也是内核分配 id 的依据）；
+/// - **元数据块**：`创建`/`结束`/`完成` 三个时间戳包在一对 `%%` 里（Obsidian
+///   原生行内注释），阅读视图里看不见——人扫一行只看到「名字 + 备注 + 标签」，
+///   而源文件里字段一个不少。备注在闭合的 `%%` 之后；
+/// - **旧格式照读**：没有 `%%` 的老行（`- [ ] 名字 创建 … 结束 … 备注 整理…`）
+///   走同一套关键字扫描，解析结果完全一样；只有被应用改写过的行才升级成新格式，
+///   没改过的行一个字符都不碰；
 /// - `[x]` = 完成，`[ ]` = 未完成；`完成 <时刻>` 只记录完成时间，不算完成标记
 ///   （打勾才是，避免与"备注里提到完成"混淆）；
 /// - `##标签` 只认**行尾**连续的 `##xxx` 段（正则 `(?:\s*##[^\s#]+)+\s*$`），
@@ -57,6 +63,10 @@ class TaskDocumentCodec {
   static const String endKeyword = '结束';
   static const String doneKeyword = '完成';
   static const String noteKeyword = '备注';
+
+  /// 元数据块的定界符（Obsidian 行内注释）。一对 `%%` 把三个时间戳包起来，
+  /// 阅读视图里看不见；备注在闭合的 `%%` 之后。
+  static const String metaDelim = '%%';
 
   /// 标签段：行尾一组 `##xxx`（`#` 后允许无空格，照决议 36 的样例）。
   static final RegExp _tagTail = RegExp(r'(?:\s*##[^\s#]+)+\s*$');
@@ -182,36 +192,58 @@ class TaskDocumentCodec {
       rest = content.substring(0, tagMatch.start).trimRight();
     }
 
-    // 2) 关键字定位：**以「创建」为锚点，只往后严格按序扫**。
+    // 2) 元数据块：新格式把三个时间戳包在一对 `%%` 里，任务名在块外。
+    //    判据 = 这一对 `%%` 里含「创建」；不含就当没包（旧格式，或者人写歪了）。
+    var title = '';
+    var inside = rest;
+    var outside = '';
+    var hasBlock = false;
+    final open = rest.indexOf(metaDelim);
+    if (open > 0) {
+      final close = rest.indexOf(metaDelim, open + metaDelim.length);
+      if (close > open) {
+        final inner = rest.substring(open + metaDelim.length, close);
+        if (_findKeyword(rest: inner, keyword: createKeyword) >= 0) {
+          hasBlock = true;
+          title = rest.substring(0, open).trim();
+          inside = inner;
+          outside = rest.substring(close + metaDelim.length);
+        }
+      }
+    }
+
+    // 3) 关键字定位：**以「创建」为锚点，只往后严格按序扫**。
     //
     // 为什么不能"全文找关键字"：任务名里天然会出现「完成」（"完成论文阅读"），
     // 全文扫描会把任务名当成完成时刻。锚定「创建」之后按
     // 结束 → 完成 → 备注 的顺序严格前进，就同时拿到了两个好处：
     // - 任务名里的关键字不参与识别（它们在「创建」之前）；
     // - 备注里出现"完成"二字也不会被当成字段（备注是最后一个、且只往后扫）。
-    final createAt = _findKeyword(rest: rest, keyword: createKeyword);
+    final text = inside;
+    final createAt = _findKeyword(rest: text, keyword: createKeyword);
     if (createAt < 0) {
       throw const FormatException('$createKeyword <日期,时间>');
     }
     final createMark =
         (key: createKeyword, start: createAt, bodyStart: createAt + createKeyword.length);
 
-    final title = rest.substring(0, createAt).trim();
+    // 旧格式（没有元数据块）：任务名就在「创建」之前
+    if (!hasBlock) title = text.substring(0, createAt).trim();
     if (title.isEmpty) {
       throw const FormatException('任务名称为空（「$createKeyword」前应有任务名）');
     }
 
     // 备注是"到行尾"的兜底；其余字段止于下一个字段关键字
-    final endMark = _markAfter(rest, createMark,
+    final endMark = _markAfter(text, createMark,
         keyword: endKeyword, nextKeywords: const [doneKeyword, noteKeyword]);
-    final doneMark = _markAfter(rest, endMark ?? createMark,
+    final doneMark = _markAfter(text, endMark ?? createMark,
         keyword: doneKeyword, nextKeywords: const [noteKeyword]);
-    final noteMark = _markAfter(rest, doneMark ?? endMark ?? createMark,
+    final noteMark = _markAfter(text, doneMark ?? endMark ?? createMark,
         keyword: noteKeyword, nextKeywords: const []);
 
     String? slice(Anchor? mark, {required bool toEnd}) {
       if (mark == null) return null;
-      var end = rest.length;
+      var end = text.length;
       if (!toEnd) {
         for (final other in [endMark, doneMark, noteMark]) {
           if (other != null && other.start > mark.start && other.start < end) {
@@ -219,7 +251,7 @@ class TaskDocumentCodec {
           }
         }
       }
-      return rest.substring(mark.bodyStart, end).trim();
+      return text.substring(mark.bodyStart, end).trim();
     }
 
     // 创建日期是必填字段（入口已确认关键字存在），坏值直接抛
@@ -228,20 +260,11 @@ class TaskDocumentCodec {
 
     // 只写日期的"结束"：缺"结束时刻"就是当天 23:59（与旧格式"只有截止日期"
     // 的手感一致，也不至于提前判逾期）
-    final endText = slice(endMark, toEnd: false);
-    final endStamp = _parseStampAt(endText);
-    // 只写日期（没写时刻）→ 当天 23:59
-    final deadline = endStamp == null
-        ? null
-        : (endStamp.hasTime
-            ? endStamp.at
-            : DateTime(endStamp.at.year, endStamp.at.month, endStamp.at.day, 23, 59));
+    final endStamp = _parseStampAt(slice(endMark, toEnd: false));
+    var deadline = _endOf(endStamp);
 
-    final doneText = slice(doneMark, toEnd: false);
-    final doneStamp = _parseStampAt(doneText);
-    final completedAt = doneStamp?.at;
-    // 写了完成时刻 = 完成意图（写入时会把复选框补成 [x]）
-    if (completedAt != null) completed = true;
+    final doneStamp = _parseStampAt(slice(doneMark, toEnd: false));
+    DateTime? completedAt = doneStamp?.at;
 
     // 备注：显式「备注」字段优先；没有这个标记时，接受"最后一个日期字段
     // 后面直接跟的散文"——这是决议 36 样例行的形态（`结束 <时刻> 这是备注。`），
@@ -252,6 +275,18 @@ class TaskDocumentCodec {
       noteText = doneStamp?.rest ?? endStamp?.rest ?? '';
     }
 
+    // 4) 块外剩余：那里是备注；若人把「结束」/「完成」写到了块外（半新半旧），
+    //    块内缺的字段就从块外补——宁可多认一个字段，也不让行整条失效。
+    if (hasBlock) {
+      final outer = _peelOutside(outside);
+      deadline ??= outer.deadline;
+      completedAt ??= outer.completedAt;
+      if (noteText.isEmpty) noteText = outer.note;
+    }
+
+    // 写了完成时刻 = 完成意图（写入时会把复选框补成 [x]）
+    if (completedAt != null) completed = true;
+
     return _ParsedLine(
       completed: completed,
       title: title,
@@ -261,6 +296,41 @@ class TaskDocumentCodec {
       description: noteText,
       tags: tags,
     );
+  }
+
+  /// 只写日期（没写时刻）的结束 → 当天 23:59。
+  static DateTime? _endOf(_Stamp? stamp) {
+    if (stamp == null) return null;
+    return stamp.hasTime
+        ? stamp.at
+        : DateTime(stamp.at.year, stamp.at.month, stamp.at.day, 23, 59);
+  }
+
+  /// 剥元数据块**后面**那一段：反复取开头的「结束 <时刻>」「完成 <时刻>」
+  /// （任意顺序、各一次），剥不动了剩下的就是备注，可带「备注」二字。
+  ///
+  /// 只认开头，是为了让备注里出现"完成后交给组长"这种散文不被误读成字段。
+  static ({DateTime? deadline, DateTime? completedAt, String note}) _peelOutside(
+      String text) {
+    var t = text.trim();
+    DateTime? deadline;
+    DateTime? completedAt;
+    while (t.isNotEmpty) {
+      final isEnd = t.startsWith(endKeyword);
+      final isDone = t.startsWith(doneKeyword);
+      if (!isEnd && !isDone) break;
+      final keyword = isEnd ? endKeyword : doneKeyword;
+      final stamp = _parseStampAt(t.substring(keyword.length));
+      if (stamp == null) break;
+      if (isEnd) {
+        deadline ??= _endOf(stamp);
+      } else {
+        completedAt ??= stamp.at;
+      }
+      t = stamp.rest;
+    }
+    if (t.startsWith(noteKeyword)) t = t.substring(noteKeyword.length).trim();
+    return (deadline: deadline, completedAt: completedAt, note: t.trim());
   }
 
   /// 在 [after] 之后找 [keyword]，且它必须出现在 [nextKeywords] 里任何一个之前
@@ -343,6 +413,10 @@ class TaskDocumentCodec {
   /// 把任务渲染成一行（不含换行）。这是**唯一**的行格式真相：
   /// 人看到的、内核指纹算的，都是这一行。
   ///
+  /// 三个时间戳包在一对 `%%` 里（Obsidian 行内注释）：阅读视图里一行只剩
+  /// 「任务名 + 备注 + 标签」，源文件里字段一个不少。备注不再带「备注」二字
+  /// ——块闭合的 `%%` 之后到标签段之前，本来就只可能是备注。
+  ///
   /// 复选框只认**显式完成**（status=completed 或落过完成时刻），**不认**
   /// `Task.isCompleted` 里那条"flex 的剩余工时为 0 即算干完"的派生判断——
   /// 那条是调度/统计语义，不是"用户打了勾"。若把它写进复选框，一次
@@ -352,15 +426,21 @@ class TaskDocumentCodec {
         task.status == TaskStatus.completed || task.completedAt != null;
     final b = StringBuffer(done ? '- [x] ' : '- [ ] ');
     b.write(task.title.replaceAll(RegExp(r'\s+'), ' ').trim());
-    b.write(' $createKeyword ${fmtStamp(task.created)}');
+
+    final stamps = <String>['$createKeyword ${fmtStamp(task.created)}'];
     if (task.deadline != null) {
-      b.write(' $endKeyword ${fmtStamp(task.deadline!)}');
+      stamps.add('$endKeyword ${fmtStamp(task.deadline!)}');
     }
     if (task.completedAt != null) {
-      b.write(' $doneKeyword ${fmtStamp(task.completedAt!)}');
+      stamps.add('$doneKeyword ${fmtStamp(task.completedAt!)}');
     }
-    final note = task.description.replaceAll(RegExp(r'[\r\n]+'), ' ').trim();
-    if (note.isNotEmpty) b.write(' $noteKeyword $note');
+    b.write(' $metaDelim${stamps.join(' ')}$metaDelim');
+
+    final note = task.description
+        .replaceAll(RegExp(r'[\r\n]+'), ' ')
+        .replaceAll(metaDelim, ' ') // 注释定界符不能出现在备注里
+        .trim();
+    if (note.isNotEmpty) b.write(' $note');
     for (final tag in task.tags) {
       final clean = tag.trim().replaceAll(RegExp(r'\s+'), '-');
       if (clean.isNotEmpty) b.write(' ##$clean');
