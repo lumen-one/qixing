@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,6 +8,7 @@ import '../theme.dart';
 import '../widgets/month_calendar.dart';
 import '../widgets/task_actions.dart';
 import '../widgets/task_tile.dart';
+import 'app_dialog.dart';
 import 'date_pick.dart' show pickDateTime;
 import 'routine_edit_dialog.dart' show routineSubtitle;
 
@@ -160,18 +159,10 @@ class _CalendarDialogState extends State<_CalendarDialog> {
     final keyboard = MediaQuery.viewInsetsOf(context).bottom;
     final availableH = size.height - keyboard;
 
-    return Dialog(
-      backgroundColor: theme.cardTheme.color,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          // 键盘抬起时按剩下的高度算上限，否则弹窗会被顶出屏幕。
-          maxHeight: math.min(size.height * 0.78, availableH - 40),
-          maxWidth: 420,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+    return AppDialog(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
             MonthCalendar(
               selected: _selected,
               dots: _dotsOf,
@@ -209,8 +200,7 @@ class _CalendarDialogState extends State<_CalendarDialog> {
                       ),
               ),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

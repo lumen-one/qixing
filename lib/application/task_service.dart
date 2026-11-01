@@ -590,8 +590,11 @@ class TaskService {
   ///
   /// - `enabled: true` 写两个键：`in_progress`（值 = 挂起时刻，组内排序的载体）+
   ///   `in_progress_daily`（今天的日期，标记"这件每天都回挂"）；
-  /// - `enabled: false` = **今天做过**：删 `in_progress`、把日期改成今天。它退出挂起组，
-  ///   明天由 [resumeDailyInProgress] 挂回来；
+  /// - `enabled: false` = **今天做过**：删 `in_progress`、把日期改成今天，并把它的
+  ///   **家搬回任务池**（`loose_home: pool`）。它退出挂起组、去池子散件段等明天。
+  ///   原来落的是"回它原来的家"——可它缺省的家就是今日页 ⑥，于是每点掉一件，
+  ///   今日页底部就多囤一件今天已经做过的长期件；而这批件第二天早上全被挂起组
+  ///   收回去，⑥ 里那一段只是当天的噪音。
   /// - 只有长期散件能挂（有截止的归调度管）。失去资格（加截止 / '转正'）由
   ///   `updateTask` 清标记，这里不再给"转正的也能取消"的口子。
   Future<Task> setInProgress(String id,
@@ -608,7 +611,10 @@ class TaskService {
         next['in_progress_daily'] = mark;
       } else {
         next.remove('in_progress');
-        if (cur.canBeInProgress) next['in_progress_daily'] = mark;
+        if (cur.canBeInProgress) {
+          next['in_progress_daily'] = mark;
+          next['loose_home'] = 'pool';
+        }
       }
       return next;
     });

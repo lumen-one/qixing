@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../domain/task.dart';
 import '../theme.dart';
 import '../widgets/task_tile.dart' show fmtWhen, trailColor;
+import 'app_dialog.dart';
 
 /// 任务详情卡（ui-interaction.md §6.1 / §6.3，决议 44）：**点条目 = 只读详情**。
 ///
@@ -10,16 +11,15 @@ import '../widgets/task_tile.dart' show fmtWhen, trailColor;
 /// 改数据一律走长按菜单（`taskMenuEntries` 只服务那一处）。属性表与调度派生量
 /// 一并移出，代价登记在 docs/architecture.md §11。
 ///
-/// 用 bottom sheet 而不是新页面：侧边栏（含系统级悬浮面板）没有路由，
-/// 与『编辑』『推迟』两处同款呈现。
+/// 用屏幕中间的卡片（[AppDialog]，与日历、新建流程同一套）而不是新页面：
+/// 侧边栏（含系统级悬浮面板）没有路由，而底部滑出的 sheet 在 240dp 窄栏里
+/// 是一条压到底的横带。
 Future<void> showTaskDetailSheet(BuildContext context, Task task) {
-  return showModalBottomSheet<void>(
+  return showDialog<void>(
     context: context,
-    isScrollControlled: true,
-    builder: (ctx) => SafeArea(
+    builder: (ctx) => AppDialog(
       child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-            20, 14, 20, 16 + MediaQuery.of(ctx).viewInsets.bottom),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,

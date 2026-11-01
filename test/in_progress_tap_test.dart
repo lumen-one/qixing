@@ -12,7 +12,7 @@ import 'package:qixing/ui/panels/today_panel.dart';
 import 'package:qixing/ui/widgets/task_selection.dart';
 
 /// 挂起组点按 = **今天做过**（决议 47，决定卡 2026-10-31-suspend-daily-habit）：
-/// 清掉今天这一挂、退回原来的家（无排序档回 ⑥ 散件段），不弹详情卡；
+/// 清掉今天这一挂、把这件搬回任务池（`loose_home`），不弹详情卡；
 /// 长按菜单给的是『不再每日挂起』——彻底退出每日循环的那一条。
 void main() {
   Future<AppController> build() async {
@@ -55,7 +55,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('点一下 = 今天做过：离开挂起组、回 ⑥，不弹详情卡', (tester) async {
+  testWidgets('点一下 = 今天做过：离开挂起组、搬回任务池，不弹详情卡', (tester) async {
     final controller = await build();
     final selection = TaskSelection();
     addTearDown(selection.dispose);
@@ -72,10 +72,13 @@ void main() {
     expect(find.text('不排期'), findsNothing, reason: '点按不弹详情卡');
     expect(find.textContaining('今天做过'), findsOneWidget, reason: '顺手给一句反馈');
     expect(find.text('挂起进行'), findsNothing, reason: '今天这一挂结束了');
-    expect(find.text('散件'), findsOneWidget, reason: '无排序档：散件回今日页 ⑥');
-    expect(find.text('练琴'), findsOneWidget);
+    expect(find.text('散件'), findsNothing,
+        reason: '不留今日页 ⑥：点掉的长期件搬去任务池，明天由挂起组收回来');
+    expect(find.text('练琴'), findsNothing, reason: '本页上不再有它');
 
-    final task = controller.taskById(controller.todayView.loose.single.id)!;
+    final task = controller.poolView.loose.single;
+    expect(task.looseHomeIsPool, isTrue, reason: '家搬到了池子散件段');
+    expect(controller.todayView.loose, isEmpty);
     expect(task.inProgressAt, isNull);
     expect(task.inProgressDailyDate, isNotNull,
         reason: '每日回挂标记留着——明天早上还要挂回来');

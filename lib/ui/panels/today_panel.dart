@@ -271,9 +271,9 @@ class TodayPanel extends StatelessWidget {
       ? () => selection.toggle(t.id)
       : () => showTaskDetailSheet(context, t);
 
-  /// 挂起组点按 = **今天做过**（决议 47）：清掉今天这一挂、退回原来的家，明天早上
-  /// 跨日检查再把它挂上来。这是全清单**唯一一个点按不是"看详情"的地方**——那件长期
-  /// 事每天都要落这一笔，多一层详情卡就是每天多一层。选择模式下照旧是勾选。
+  /// 挂起组点按 = **今天做过**（决议 47）：清掉今天这一挂、把这件搬回任务池，明天
+  /// 早上跨日检查再把它挂上来。这是全清单**唯一一个点按不是"看详情"的地方**——那件
+  /// 长期事每天都要落这一笔，多一层详情卡就是每天多一层。选择模式下照旧是勾选。
   VoidCallback _tapInProgress(BuildContext context, Task t) {
     if (selection.selecting) return () => selection.toggle(t.id);
     return () async {
@@ -281,7 +281,8 @@ class TodayPanel extends StatelessWidget {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('今天做过「${t.title}」，明天再挂上'),
+          // 说清它去了哪儿：点完它从本页消失，不报一句会让人以为误删。
+          content: Text('今天做过「${t.title}」，已回任务池，明天再挂上'),
           persist: false,
           duration: const Duration(seconds: 2),
         ),

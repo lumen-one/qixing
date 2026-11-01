@@ -6,26 +6,29 @@ import '../../domain/task.dart';
 import '../app_controller.dart';
 import '../theme.dart';
 import '../widgets/month_calendar.dart';
+import 'app_dialog.dart';
 import 'date_pick.dart' show atDefaultHour;
 import 'task_form.dart';
 
 /// 新建流程：**先问什么时候，再填内容**。
 ///
 /// 日期不再是表单里的一行档位：绝大多数任务都有日期，把它挪到第一步，
-/// 剩下的类型/工时/重要度才落进表单。两页住同一个 sheet 里——
+/// 剩下的类型/工时/重要度才落进表单。两页住同一个弹窗里——
 /// 选完日期原地切页，不另弹一层。
 ///
 /// 第 1 页是月历（与日历弹窗共用 [MonthCalendar]，这里不打点）：点某天即
 /// 落定，没有『确定』这一步——日期在第 2 页仍然看得见、改得动。
 /// 『不排期』从"第四档"挪到标题行右侧，仍然是要显式点一下的那一档。
+///
+/// 呈现是**屏幕中间的一张卡**（[AppDialog]，与日历弹窗同一套尺寸）：底部滑出
+/// 的 sheet 在 240dp 的窄栏里是一条压到底的横带，在桌面壳里又铺满整个窗口。
 Future<void> showCreateFlow(
   BuildContext context,
   AppController controller,
 ) async {
-  final created = await showModalBottomSheet<bool>(
+  final created = await showDialog<bool>(
     context: context,
-    isScrollControlled: true,
-    builder: (_) => _CreateFlowSheet(controller: controller),
+    builder: (_) => AppDialog(child: _CreateFlowSheet(controller: controller)),
   );
   if (created != true || !context.mounted) return;
   ScaffoldMessenger.of(context).showSnackBar(
@@ -135,13 +138,10 @@ class _CreateFlowSheetState extends State<_CreateFlowSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // 键盘让位由 Dialog 自己做（它按 viewInsets 整体上推），这里**不加**
+    // viewInsets 的下边距——加上就是双份留白，表单页会被顶掉半截。
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        20,
-        14,
-        20,
-        16 + MediaQuery.of(context).viewInsets.bottom,
-      ),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
       child: AnimatedSize(
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
@@ -159,53 +159,55 @@ class _CreateFlowSheetState extends State<_CreateFlowSheet> {
       key: const ValueKey('when'),
       builder: (context, constraints) {
         // 月历之外还要摆下的：标题行、组件自己的页头与星期行、底部那行提示、
-        // 上下内边距。可用高度不够时压格子，而不是让整页溢出——面板高度
-        // 下限是 320。
+        // 上下内边距。可用高度不够时先压格子；压到 96 还是不够（键盘抬起来 +
+        // 极矮的容器），整页可滚，不硬撑出溢出条。
         const chrome = 190.0;
         final gridMax = constraints.maxHeight.isFinite
             ? math.max(96.0, constraints.maxHeight - chrome)
             : null;
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text('什么时候？', style: theme.textTheme.titleMedium),
-                ),
-                // 三无是少数派，但必须留一条路：桌面壳建三无只有这里
-                // （快记只在系统级悬浮把手上）。
-                TextButton(
-                  onPressed: () => _enterForm(null),
-                  child: const Text('不排期'),
-                ),
-              ],
-            ),
-            // 桌面壳的 sheet 是全窗口宽——不限宽的话七列每格能到 100dp 以上，
-            // 月历会撑成一屏半。与日历弹窗同一个上限，居中等宽。
-            Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: MonthCalendar(
-                  selected: _picked,
-                  gridMaxHeight: gridMax,
-                  onPick: (day) =>
-                      _enterForm(atDefaultHour(day, _value.type)),
+        return SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('什么时候？', style: theme.textTheme.titleMedium),
+                  ),
+                  // 三无是少数派，但必须留一条路：桌面壳建三无只有这里
+                  // （快记只在系统级悬浮把手上）。
+                  TextButton(
+                    onPressed: () => _enterForm(null),
+                    child: const Text('不排期'),
+                  ),
+                ],
+              ),
+              // 卡片本身有 420 的上限，这里再限一道是为了桌面壳上的一屏宽卡片：
+              // 不限宽七列每格能到 100dp 以上，月历会撑成一屏半。
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: MonthCalendar(
+                    selected: _picked,
+                    gridMaxHeight: gridMax,
+                    onPick: (day) =>
+                        _enterForm(atDefaultHour(day, _value.type)),
+                  ),
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Text(
-                '点某天，接着填内容',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  '点某天，接着填内容',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );
@@ -216,50 +218,53 @@ class _CreateFlowSheetState extends State<_CreateFlowSheet> {
     // 重要度看设置里的『问重要度』（关掉时整个维度不参与，表单里就没有这一行）。
     // 『响铃』不在裁剪之列——提醒一律会发，它只是声音开关。
     final mode = widget.controller.scheduleMode;
-    return Column(
+    // 键盘起来后弹窗高度会缩：字段多的时候要能滚，别把『创建』挤出去。
+    return SingleChildScrollView(
       key: const ValueKey('form'),
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TaskFormBody(
-          value: _value,
-          onChanged: (v) => setState(() => _value = v),
-          titleCtrl: _titleCtrl,
-          noteCtrl: _noteCtrl,
-          workCtrl: _workCtrl,
-          autofocusTitle: true,
-          onSubmit: _submit,
-          hourFollowsType: true,
-          onEditTime: _pickTime,
-          showWorkStrength: !mode.isManual,
-          showImportance: widget.controller.askImportance,
-          deadlineActions: [
-            TextButton(
-              onPressed: () => setState(() => _pickingWhen = true),
-              child: const Text('改日期'),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TaskFormBody(
+            value: _value,
+            onChanged: (v) => setState(() => _value = v),
+            titleCtrl: _titleCtrl,
+            noteCtrl: _noteCtrl,
+            workCtrl: _workCtrl,
+            autofocusTitle: true,
+            onSubmit: _submit,
+            hourFollowsType: true,
+            onEditTime: _pickTime,
+            showWorkStrength: !mode.isManual,
+            showImportance: widget.controller.askImportance,
+            deadlineActions: [
+              TextButton(
+                onPressed: () => setState(() => _pickingWhen = true),
+                child: const Text('改日期'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          FilledButton(
+            onPressed: _value.title.trim().isEmpty || _saving ? null : _submit,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(52),
+              backgroundColor: AppColors.accent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
             ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        FilledButton(
-          onPressed: _value.title.trim().isEmpty || _saving ? null : _submit,
-          style: FilledButton.styleFrom(
-            minimumSize: const Size.fromHeight(52),
-            backgroundColor: AppColors.accent,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+            child: const Text(
+              '✱ 创建',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 2,
+              ),
             ),
           ),
-          child: const Text(
-            '✱ 创建',
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 2,
-            ),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

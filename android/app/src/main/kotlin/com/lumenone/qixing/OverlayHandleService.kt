@@ -1723,10 +1723,17 @@ class OverlayHandleService : Service() {
     private fun edgeX(wm: WindowManager): Int =
         if (dockedRight) max(0, screenWidth(wm) - hotZoneWidthPx()) else 0
 
-    /** 上次落盘的 y（首次 = 屏幕竖向居中）。 */
+    /**
+     * 上次落盘的 y（首次 = **屏幕竖向四分之一处**）。
+     *
+     * 热区 200dp 高、白条在热区里竖直居中，所以让**热区中心**落在屏高 1/4 处，
+     * 白条就正好悬在上方那一段——新装时把手在右上（停靠边缺省即右侧），
+     * 不是屏幕正中间那条"像在分屏"的位置。之后拖到哪儿就是哪儿。
+     */
     private fun restoredY(wm: WindowManager): Int {
         val saved = prefs?.getInt(KEY_Y, -1) ?: -1
-        val y = if (saved >= 0) saved else max(0, (screenHeight(wm) - hotZoneHeightPx()) / 2)
+        val y = if (saved >= 0) saved
+        else (screenHeight(wm) / 4 - hotZoneHeightPx() / 2)
         return clampY(y)
     }
 

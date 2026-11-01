@@ -204,6 +204,10 @@ void main() {
       final done = await svc.setInProgress(a.id, enabled: false);
       expect(done.inProgressAt, isNull);
       expect(done.inProgressDailyDate, '2026-10-07');
+      expect(done.looseHomeIsPool, isTrue,
+          reason: '今天做过 = 搬回任务池等明天，不留在今日页 ⑥ 占地方');
+      expect((await repo.getTask(a.id))!.looseHomeIsPool, isTrue,
+          reason: '落盘的也带着——否则从盘回流后又落回今日 ⑥');
       expect((await repo.getTask(a.id))!.inProgressAt, isNull,
           reason: '落盘的也清了——否则从盘回流后又挂回来');
       expect(
