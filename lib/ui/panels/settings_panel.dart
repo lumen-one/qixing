@@ -173,6 +173,14 @@ class _SettingsPanelState extends State<SettingsPanel> {
           trailing: const Icon(Icons.edit_outlined),
           onTap: () => _editTaskDir(context),
         ),
+        // §9 第 15 条：孤儿副本清理。删过任务、手改过 doc、多设备来回搬都会
+        // 在 .gtd/ 里留下没人认领的副本，留着只会让目录越滚越大。
+        ListTile(
+          leading: const Icon(Icons.cleaning_services_outlined),
+          title: const Text('整理内核属性文件'),
+          subtitle: const Text('删掉与任务行对不上的副本，不动任务与回收站'),
+          onTap: () => _pruneKernelFiles(context),
+        ),
       ];
 
   /// 侧边栏区：默认页面 + 把手与尺寸（都只改"面板长什么样、停在哪儿"，
@@ -524,6 +532,31 @@ class _SettingsPanelState extends State<SettingsPanel> {
         ),
       ),
     );
+  }
+
+  Future<void> _pruneKernelFiles(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('整理内核属性文件？'),
+        content: const Text('只删与任何任务行都对不上的那份副本（工作强度、优先级这类'
+            '属性会跟着消失）；任务本身和回收站都不动。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('整理')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final removed = await _c.pruneKernelFiles();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(removed == 0 ? '没有需要整理的副本' : '已删掉 $removed 份副本'),
+    ));
   }
 
   Future<void> _purgeTrash(BuildContext context) async {

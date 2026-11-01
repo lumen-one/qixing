@@ -191,7 +191,7 @@ void main() {
   // 内核属性文档只有 id 一行（附录 B.2 长期任务特例）
   // ------------------------------------------------------------------
 
-  group('内核属性文档只有 id 一行', () {
+  group('内核属性文档只有 id 与 title 两行', () {
     late Directory tmp;
     late MarkdownTaskRepository repo;
     late TaskService svc;
@@ -216,10 +216,12 @@ void main() {
     File doc() => File('${tmp.path}/tasks.md');
     File kernel(String id) => File('${tmp.path}/.gtd/$id.md');
 
-    test('保存后 .gtd/<id>.md 只有 id：内核字段与 digest 全缺行', () async {
+    test('保存后 .gtd/<id>.md 只有 id 与 title：内核字段与 digest 全缺行', () async {
       final t = await svc.createTask(title: '学一门外语');
       final side = kernel(t.id).readAsStringSync();
       expect(side, contains('id: ${t.id}'));
+      // title 是连接键之二，不是内核算出来的东西：长期任务靠它回到第 2 档配对。
+      expect(side, contains('title: 学一门外语'));
       for (final key in const [
         'work_intensity',
         'remaining_load',
@@ -257,7 +259,7 @@ void main() {
       expect((await reloaded.loadAll()).single.isCompleted, isTrue);
     });
 
-    test('codec：decode 只有 id 的 sidecar → 长期；encode 长期 → 只有 id',
+    test('codec：decode 只有 id 的 sidecar → 长期；encode 长期 → id + title',
         () {
       const codec = TaskSidecarCodec();
       final t = codec.decode('---\nid: task-777\n---\n').task;
@@ -274,7 +276,7 @@ void main() {
         importance: null,
       );
       expect(codec.encode(EncodedTask(task: long, originalRaw: null)).trim(),
-          '---\nid: task-888\n---');
+          '---\nid: task-888\ntitle: x\n---');
 
       // 数字工时 → 长期的退化：原有内核行全部移除（null → 整行移除）
       final numeric = Task(
@@ -291,7 +293,7 @@ void main() {
       expect(full, contains('work_intensity: 60'));
       final degraded =
           codec.encode(EncodedTask(task: numeric.copyWith(clearWork: true), originalRaw: full));
-      expect(degraded.trim(), '---\nid: task-888\n---');
+      expect(degraded.trim(), '---\nid: task-888\ntitle: x\n---');
     });
 
     test('登记的 metadata 键照常跟随（长期不是"什么都不写"）', () async {

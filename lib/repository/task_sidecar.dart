@@ -46,6 +46,7 @@ class TaskSidecarCodec {
   /// 内核拥有的字段（编码时原地改写；`null` 值 → 整行移除）。
   static const List<String> ownedKeys = [
     'id',
+    'title',
     'digest',
     'work_intensity',
     'remaining_load',
@@ -236,6 +237,11 @@ class TaskSidecarCodec {
     switch (key) {
       case 'id':
         return t.id;
+      case 'title':
+        // 连接键之二：人写那一行任务名的副本。**'长期'也写**——它没有 digest，
+        // 配对全靠这一档；不写就等于让每次外部改写都重造一批副本。
+        final clean = t.title.replaceAll(RegExp(r'[\r\n]+'), ' ').trim();
+        return clean.isEmpty ? null : clean;
       case 'digest':
         return long ? null : digest;
       case 'work_intensity':

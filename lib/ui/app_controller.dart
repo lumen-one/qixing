@@ -1214,6 +1214,9 @@ class AppController extends ChangeNotifier {
     await refreshTrash();
   }
 
+  /// 整理内核属性目录，返回删掉的孤儿副本数（设置页按钮用）。
+  Future<int> pruneKernelFiles() => service.pruneKernelFiles();
+
   Future<Task> createTask({
     required String title,
     TaskType type = TaskType.flex,

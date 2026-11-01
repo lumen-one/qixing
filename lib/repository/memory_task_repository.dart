@@ -41,6 +41,9 @@ class MemoryTaskRepository implements TaskRepository {
   Future<void> purgeTrash() async => _trash.clear();
 
   @override
+  Future<int> pruneOrphans() async => 0; // 内存实现没有"副本文件"，无从整理
+
+  @override
   Stream<RepositoryEvent>? watch() => null;
 
   @override

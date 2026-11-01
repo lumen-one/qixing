@@ -489,6 +489,45 @@ status: active
     expect((await repo.loadAll()).map((t) => t.title), ['甲', '乙', '丙']);
   });
 
+  test('外部整份改写行：长期任务靠 title 认回，不再每次加载重造副本', () async {
+    // 两条都没有截止 = 长期任务，内核文件里没有 digest，配对只能靠"任务名相等"。
+    // 这一档曾经是空的（编码从不写 title），于是每次加载都重造一批副本、
+    // 目录越滚越大——这里钉住它。
+    doc().writeAsStringSync('- [ ] 甲 %%创建 2026-10-11,07:00%%\n'
+        '- [ ] 乙 %%创建 2026-10-11,07:05%%\n');
+    await repo.loadAll();
+    int files() => Directory('${tmp.path}/.gtd')
+        .listSync()
+        .whereType<File>()
+        .where((f) => !f.path.endsWith('log.md'))
+        .length;
+    expect(files(), 2);
+
+    // 人把这一份整份改写一遍：指纹全断，任务数不变
+    doc().writeAsStringSync('- [ ] 甲 %%创建 2026-10-11,07:00%% 补了一句备注\n'
+        '- [ ] 乙 %%创建 2026-10-11,07:05%%\n');
+    for (var i = 0; i < 3; i++) {
+      await repo.loadAll();
+    }
+    expect(files(), 2, reason: '按任务名认回之后不该再造副本');
+    final loaded = await repo.loadAll();
+    expect(loaded.map((t) => t.title), ['甲', '乙']);
+    expect(loaded.first.description, '补了一句备注');
+  });
+
+  test('整理内核属性文件：删掉没人认领的副本，留下的仍是原任务', () async {
+    await repo.save(makeTask());
+    await repo.loadAll();
+    File('${tmp.path}/.gtd/task-999.md')
+        .writeAsStringSync('---\nid: task-999\ntitle: 谁都对不上\n---\n');
+
+    expect(await repo.pruneOrphans(), 1);
+    expect(kernel('task-999').existsSync(), isFalse);
+    expect(kernel('task-001').existsSync(), isTrue);
+    expect(doc().readAsStringSync(), contains('完成 Agent 调度论文阅读'));
+    expect((await repo.loadAll()).single.estimatedWork, 120);
+  });
+
   test('迁移：旧「一任务一文件」自动转双文档，旧文件进 legacy-tasks/', () async {
     File('${tmp.path}/task-001.md').writeAsStringSync('''
 ---

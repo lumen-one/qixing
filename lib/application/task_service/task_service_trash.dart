@@ -62,6 +62,15 @@ extension TaskServiceTrash on TaskService {
     _emit(DomainEventType.trashPurged, '', origin);
   }
 
+  /// 整理内核属性目录：删掉没人认领的副本（设置页显式触发）。
+  /// 与清空回收站不是一回事——回收站里是"人删掉的任务"，这里是"没人认领的副本"。
+  /// 删完要重读盘：配对结果取决于目录里还剩哪些文件。
+  Future<int> pruneKernelFiles({EventOrigin origin = EventOrigin.user}) async {
+    final removed = await repo.pruneOrphans();
+    if (removed > 0) await refreshSchedule(origin: origin);
+    return removed;
+  }
+
   /// 回收站清单（查询，不经缓存）。
   Future<List<Task>> loadTrash() => repo.loadTrash();
 }

@@ -37,6 +37,10 @@ abstract class TaskRepository {
   /// 清空回收站（真删，仅设置页显式触发）。
   Future<void> purgeTrash();
 
+  /// 整理内核属性目录：删掉与人类文档里任何一行都对不上的副本，返回删掉的个数。
+  /// 与 [purgeTrash] 是两件事——回收站里的是"人删掉的任务"，这里是"没人认领的孤儿"。
+  Future<int> pruneOrphans();
+
   /// 可选能力：文件监听。null = 平台/实现不支持（如安卓 SAF），
   /// 调用方降级为"回到前台时刷新"。
   Stream<RepositoryEvent>? watch();

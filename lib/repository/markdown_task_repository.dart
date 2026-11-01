@@ -492,6 +492,35 @@ class MarkdownTaskRepository implements TaskRepository {
     }
   }
 
+  @override
+  Future<int> pruneOrphans() async {
+    // 先走一遍 loadAll：它顺手把该补的 title / digest 补上，也把"哪一行认领了
+    // 哪一份副本"算清楚；不先配对就删文件，等于拿旧账本当真理。
+    final tasks = await loadAll();
+    final keep = {for (final t in tasks) t.id};
+    var removed = 0;
+    for (final entity in _kernelDir.listSync()) {
+      if (entity is! File || !entity.path.endsWith('.md')) continue;
+      final name = entity.path.split(Platform.pathSeparator).last;
+      if (name == logFileName) continue;
+      final id = name.substring(0, name.length - 3);
+      if (keep.contains(id)) continue;
+      try {
+        await entity.delete();
+        removed++;
+        _lastSeenSidecar.remove(id);
+        _idToDigest.remove(id);
+        _digestToId.removeWhere((_, v) => v == id);
+      } on FileSystemException catch (e) {
+        _parseWarnings.add('$kernelDirName/$name: 删除失败 $e');
+      }
+    }
+    if (removed > 0) {
+      _notices.add('已清理 $removed 份无人认领的内核属性文件');
+    }
+    return removed;
+  }
+
   /// 往回收站文件的 frontmatter 末尾插那两个键。没有 frontmatter 就原样返回
   /// （认不出结构时不硬塞，恢复时退化为按标签追加）。
   static String _withTrashKeys(String raw, String? line, int? index) {
