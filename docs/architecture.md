@@ -355,6 +355,7 @@ TaskService 每个命令完成后广播 `DomainEvent`（含 origin）。通知�
 | `updateScheduleMode(mode)`                                                       | **两档切换**（**standard** / **manual**，新装默认）：决定跑不跑调度与业务层的顺序口径；只重算，不动任何任务数据、无迁移                                                                                                                  |
 | `updateAskImportance(enabled)`                                                   | **『问重要度』开关**（设置页『提醒与排序』）：改的是排序乘数（关掉时取 1），不是任务数据；改完重算。已存的 `importance` 原样留在内核属性文档里                                                                                           |
 | `updateWorkRule(rule)`                                                           | **换工时日历**（设置页「工作时间」）：校验后替换 `workRule`、清空锚点表（产能变了旧锚点没有意义）并重算。不动任何任务数据                                                                                                        |
+| `pruneKernelFiles()`                                                             | **整理内核属性文件**（设置页『任务目录』区）：先 `loadAll` 让配对把该补的补上，再删掉 `.gtd/` 里没有任何一行认领的副本（删过任务、手改过文件、多设备来回搬留下的）；不动 `tasks.md`、不动 `.trash/`、不碰 `log.md` |
 | `deleteTask` / `restoreTask` / `purgeTrash`                                      | 软删除三件套：内核文件移入 `.gtd/.trash/` 并把那一行从 `tasks.md` 拿掉 / 按原行写回原位 / 清空回收                                                                                                                                                                       |
 | `completeTasks` / `deleteTasks` / `restoreTasks`（ids） | **批量版本**（选择模式用）：完成 / 软删除 / 撤销一批。**一次手势 = 一个事件 + 一次重算**（下文通用约束）：内存态整体换终态 → 发一个事件（复用 `taskCompleted` / `taskDeleted` / `taskRestored`，taskId = 首个生效的）→ 逐条落盘（回收站的文件搬移本来就是逐条 IO）→ 重算。逐条调单条命令 = N 件任务触发 N 次全量重算，清单一条条闪。`completeTasks` 跳过已完成项（幂等：不改写人写在 Obsidian 里的完成时刻） |
 | `recomputeSchedule` / `refreshSchedule`                                          | 重锚（C2）两条：前者用**当前内存态**重算（**命令走这条，不读盘**）；后者先 `loadAll` 从盘回流再重算（文件监听 / 回前台 / 启动 / `restoreTask` / 提醒到点走这条）                                                                         |
@@ -470,9 +471,9 @@ class TaskDocumentCodec {
   static String digestOf(String lineContent);   // FNV-1a 32 位，纯 Dart 无依赖
 }
 
-/// 内核属性文档 .gtd/<id>.md：任务 id / 工作强度 / 优先级 / 时间裕度 /
-/// 剩余工作量 + digest（连接键）。
-/// 长期任务例外：只有 id 一行——上面那些键全部缺行，
+/// 内核属性文档 .gtd/<id>.md：任务 id / title（连接键之二，那一行的副本）/
+/// 工作强度 / 优先级 / 时间裕度 / 剩余工作量 + digest（连接键）。
+/// 长期任务例外：只有 id + title 两行——上面那些键全部缺行，
 /// digest 也没有（配对走 formats/matching.md 第 2/3 档）。
 /// 注意：它**不是** TaskCodec 实现（多了 digest 接线 + 登记键写回，见上）。
 class TaskSidecarCodec {
