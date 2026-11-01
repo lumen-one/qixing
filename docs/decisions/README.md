@@ -66,6 +66,7 @@
 | [2026-10-31-plan-drag-aligns-time.md](2026-10-31-plan-drag-aligns-time.md) | 编排拖动 = 把时刻对齐到旁边那条 |
 | [2026-10-31-pool-plan-date-order.md](2026-10-31-pool-plan-date-order.md) | 任务池计划段按日期排，取消手动整理序 |
 | [2026-10-31-suspend-daily-habit.md](2026-10-31-suspend-daily-habit.md) | 挂起 = 长期散件的每日「今天做过」，次日自动回挂 |
+| [2026-11-01-dialog-presentation.md](2026-11-01-dialog-presentation.md) | 新建流程从底部升起，详情卡与日历居中 |
 
 待补（都是"会被重新质疑"的取舍，按需要慢慢写）：
 
