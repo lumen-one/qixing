@@ -11,9 +11,9 @@ import 'app_dialog.dart';
 /// 改数据一律走长按菜单（`taskMenuEntries` 只服务那一处）。属性表与调度派生量
 /// 一并移出，代价登记在 docs/architecture.md §11。
 ///
-/// 用屏幕中间的卡片（[AppDialog]，与日历、新建流程同一套）而不是新页面：
-/// 侧边栏（含系统级悬浮面板）没有路由，而底部滑出的 sheet 在 240dp 窄栏里
-/// 是一条压到底的横带。
+/// 用屏幕中间的卡片（[AppDialog]，与日历弹窗同一套）而不是新页面：侧边栏
+/// （含系统级悬浮面板）没有路由，而底部滑出的 sheet 在 240dp 窄栏里是一条
+/// 压到底的横带、在桌面壳里又铺满整窗。
 Future<void> showTaskDetailSheet(BuildContext context, Task task) {
   return showDialog<void>(
     context: context,

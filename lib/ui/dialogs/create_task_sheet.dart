@@ -6,29 +6,31 @@ import '../../domain/task.dart';
 import '../app_controller.dart';
 import '../theme.dart';
 import '../widgets/month_calendar.dart';
-import 'app_dialog.dart';
 import 'date_pick.dart' show atDefaultHour;
 import 'task_form.dart';
 
 /// 新建流程：**先问什么时候，再填内容**。
 ///
 /// 日期不再是表单里的一行档位：绝大多数任务都有日期，把它挪到第一步，
-/// 剩下的类型/工时/重要度才落进表单。两页住同一个弹窗里——
+/// 剩下的类型/工时/重要度才落进表单。两页住同一个 sheet 里——
 /// 选完日期原地切页，不另弹一层。
 ///
 /// 第 1 页是月历（与日历弹窗共用 [MonthCalendar]，这里不打点）：点某天即
 /// 落定，没有『确定』这一步——日期在第 2 页仍然看得见、改得动。
 /// 『不排期』从"第四档"挪到标题行右侧，仍然是要显式点一下的那一档。
 ///
-/// 呈现是**屏幕中间的一张卡**（[AppDialog]，与日历弹窗同一套尺寸）：底部滑出
-/// 的 sheet 在 240dp 的窄栏里是一条压到底的横带，在桌面壳里又铺满整个窗口。
+/// 呈现仍是**从底部升起的横带**（不是详情卡那种居中卡片）：它比详情卡大
+/// 得多，而"贴着手里这块面板"在 240dp 的悬浮面板里做不到——那张卡片只剩
+/// 208dp 宽，月历七列每格 26dp。既然贴不住，就从底部整条升起，位置对谁都
+/// 一样明白。取舍见 `docs/decisions/2026-11-01-dialog-presentation.md`。
 Future<void> showCreateFlow(
   BuildContext context,
   AppController controller,
 ) async {
-  final created = await showDialog<bool>(
+  final created = await showModalBottomSheet<bool>(
     context: context,
-    builder: (_) => AppDialog(child: _CreateFlowSheet(controller: controller)),
+    isScrollControlled: true,
+    builder: (_) => _CreateFlowSheet(controller: controller),
   );
   if (created != true || !context.mounted) return;
   ScaffoldMessenger.of(context).showSnackBar(
@@ -138,10 +140,15 @@ class _CreateFlowSheetState extends State<_CreateFlowSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // 键盘让位由 Dialog 自己做（它按 viewInsets 整体上推），这里**不加**
-    // viewInsets 的下边距——加上就是双份留白，表单页会被顶掉半截。
+    // sheet 不会自己给输入法让位（居中卡片会，Dialog 内部就按 viewInsets 上推）：
+    // 这里得把键盘高度补成下边距，否则表单页的后半截藏在输入法下面。
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        16,
+        20,
+        18 + MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: AnimatedSize(
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
@@ -183,8 +190,8 @@ class _CreateFlowSheetState extends State<_CreateFlowSheet> {
                   ),
                 ],
               ),
-              // 卡片本身有 420 的上限，这里再限一道是为了桌面壳上的一屏宽卡片：
-              // 不限宽七列每格能到 100dp 以上，月历会撑成一屏半。
+              // 桌面壳的 sheet 是全窗口宽——不限宽的话七列每格能到 100dp 以上，
+              // 月历会撑成一屏半。与日历弹窗同一个上限，居中等宽。
               Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 420),
