@@ -189,6 +189,10 @@ void main() {
   });
 
   testWidgets('记录页：按住拖选一段 → 写文字 → 落成日历上的圈', (tester) async {
+    // 记录页的日历默认停在**当月**：标签与圈出来的日期都得跟着今天走，
+    // 写死月份的话跨月就红（2026-11 踩过一次）。
+    final now = DateTime.now();
+    final monthLabel = '${now.year} 年 ${now.month} 月';
     final plain = Mainline(
       id: 'ml-2',
       title: '写作',
@@ -204,7 +208,7 @@ void main() {
     // 页头 1/2 = 翻到记录（记录页里横滑归日历，翻页只能点它）
     await tester.tap(find.text('1/2'));
     await tester.pumpAndSettle();
-    expect(find.text('2026 年 10 月'), findsOneWidget);
+    expect(find.text(monthLabel), findsOneWidget);
 
     final from = tester.getCenter(find.text('19'));
     final to = tester.getCenter(find.text('21'));
@@ -222,14 +226,16 @@ void main() {
 
     final logs = controller.activeMainline!.logs;
     expect(logs, hasLength(1));
-    expect(logs.single.start, DateTime(2026, 10, 19));
-    expect(logs.single.end, DateTime(2026, 10, 21));
+    expect(logs.single.start, DateTime(now.year, now.month, 19));
+    expect(logs.single.end, DateTime(now.year, now.month, 21));
     expect(logs.single.text, '补记三天');
     // 圈里就有这段字（不用点开）
     expect(find.text('补记三天'), findsOneWidget);
   });
 
   testWidgets('记录页下半区向右滑 → 回行为链（日历区域仍归圈日期）', (tester) async {
+    final now = DateTime.now();
+    final monthLabel = '${now.year} 年 ${now.month} 月';
     final plain = Mainline(
       id: 'ml-3',
       title: '写作',
@@ -244,7 +250,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('1/2'));
     await tester.pumpAndSettle();
-    expect(find.text('2026 年 10 月'), findsOneWidget);
+    expect(find.text(monthLabel), findsOneWidget);
 
     // 空提示那块 = 下半区：向右拖 → 回行为链
     await tester.drag(
@@ -253,7 +259,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('开头'), findsOneWidget);
-    expect(find.text('2026 年 10 月'), findsNothing);
+    expect(find.text(monthLabel), findsNothing);
   });
 
   testWidgets('记录页：点当天详情里的圈改文字，改的是那一条', (tester) async {
@@ -342,6 +348,8 @@ void main() {
   });
 
   testWidgets('窄面板 240dp：顶栏两行与覆盖页都不溢出', (tester) async {
+    final now = DateTime.now();
+    final monthLabel = '${now.year} 年 ${now.month} 月';
     final controller = makeController(prefix: [sample()]);
     await tester.runAsync(() => controller.mainlineService!.load());
     await pumpPanel(tester, controller, width: 240, height: 480);
@@ -354,6 +362,6 @@ void main() {
     // 切到记录页：日历在 240×480 的剩余高度里也要能画出来
     await tester.tap(find.text('1/2'));
     await tester.pumpAndSettle();
-    expect(find.text('2026 年 10 月'), findsOneWidget);
+    expect(find.text(monthLabel), findsOneWidget);
   });
 }
