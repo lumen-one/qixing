@@ -249,7 +249,7 @@ class TaskTile extends StatelessWidget {
     }
     if (snoozed) return [const _Badge(label: '已推迟', color: Colors.blueGrey)];
     // 工时与『插队』不进列表行（决议见 2026-10-28 卡片）：插队由位置表达，
-    // 工时在编辑表单里看。
+    // 工时在编辑表单里看（无排序档不看工时，编辑里也没有那一行）。
     return const [];
   }
 }

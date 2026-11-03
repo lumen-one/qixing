@@ -96,13 +96,18 @@ class TaskFormBody extends StatelessWidget {
   /// 备注框回车：新建 = 提交，编辑 = 保存。
   final VoidCallback? onSubmit;
 
-  /// **新建时按档位与开关裁的行**（§5.1 / §7.0）：无排序档工时与重要度都不显示
-  /// （缺省值照常落盘），标准档显示工时，重要度看设置里的『问重要度』。
+  /// **按档与开关裁的三行**（§5.1 / §7.0）：[showWorkStrength] 管『长期 / 按时长』，
+  /// [showWorkLoad] 管预计工时，[showImportance] 管重要度。
   ///
-  /// **编辑态 [showWorkStrength] 恒为 true**：编辑表单不按档位裁——它也是把一件从
-  /// 缺省值升成有估值的唯一入口，藏起工时行等于让人先切档。[showImportance] 两边
-  /// 同源（跟设置里的开关走）：关掉的是整个维度，不是一个控件的可见性。
+  /// 无排序档只留工作强度——'长期'在这一档决定响不响（长期件不排站），工时与重要度
+  /// 没有去处：排序不跑、提醒也不看工时。缺省值照常落盘（30 分钟 / 3），切档即可用。
+  /// 标准档三行都摆，重要度再看设置里的『问重要度』（关掉的是整个维度，不是一个
+  /// 控件的可见性）。
+  ///
+  /// 新建与编辑各自传值：新建整段被档位裁掉（这一档只问标题和日期），编辑保留工作
+  /// 强度那一行——它是这一档里唯一能标'长期'的地方（散件靠『不排期』）。
   final bool showWorkStrength;
+  final bool showWorkLoad;
   final bool showImportance;
 
   const TaskFormBody({
@@ -118,6 +123,7 @@ class TaskFormBody extends StatelessWidget {
     this.hourFollowsType = false,
     this.onSubmit,
     this.showWorkStrength = true,
+    this.showWorkLoad = true,
     this.showImportance = true,
   });
 
@@ -215,20 +221,22 @@ class TaskFormBody extends StatelessWidget {
             ],
           ),
           if (!value.longTerm) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                const Text('预计工时（分钟）'),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextFormField(
-                    controller: workCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(hintText: '30'),
+            if (showWorkLoad) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const Text('预计工时（分钟）'),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: workCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(hintText: '30'),
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
+            ],
             if (showImportance) ...[
               const SizedBox(height: 4),
               Row(

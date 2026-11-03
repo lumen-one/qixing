@@ -5,11 +5,11 @@ import '../app_controller.dart';
 import 'date_pick.dart';
 import 'task_form.dart';
 
-/// 编辑态 = 属性展开表单（决议 17）：显式控件直改类型/日期/工时/备注，
+/// 编辑态 = 属性展开表单（决议 17）：显式控件直改类型/日期/工作强度/备注，
 /// 改完调度自动重锚。长按滑档位手势只属于『新建』。
 ///
 /// 字段与新建第 2 页同源（[TaskFormBody]）：两边能填的东西一样，
-/// 只有"初值从哪来、提交走哪条命令"不同。
+/// 只有"初值从哪来、提交走哪条命令"不同，以及无排序档这里多留一行工作强度。
 Future<void> showEditSheet(
   BuildContext context,
   AppController controller, {
@@ -128,9 +128,14 @@ class _EditTaskSheetState extends State<_EditTaskSheet> {
             noteCtrl: _noteCtrl,
             workCtrl: _workCtrl,
             onSubmit: _save,
-            // 工时永远显示（不按档位裁）；重要度跟设置里的开关走——关掉时整个
-            // 维度不参与排序，摆一个改了不影响顺序的滑块就是骗人。
-            showImportance: widget.controller.askImportance,
+            // 编辑表单也按档裁，但只裁到工时与重要度：无排序档不跑公式、提醒也不看
+            // 工时，这两行填了没有去处（缺省 30 / 3 照常躺着，切档即可用）。『工作
+            // 强度』留着——'长期'在这一档决定响不响，这里也是唯一能改它的地方。
+            showWorkLoad: !widget.controller.isManualSort,
+            // 重要度另受『问重要度』管：关掉时整个维度不参与排序，摆一个改了不影响
+            // 顺序的滑块就是骗人。
+            showImportance: widget.controller.askImportance &&
+                !widget.controller.isManualSort,
             deadlineActions: [
               TextButton(
                 onPressed: _pickDeadline,
