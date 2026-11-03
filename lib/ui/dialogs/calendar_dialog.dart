@@ -9,16 +9,13 @@ import '../widgets/month_calendar.dart';
 import '../widgets/task_actions.dart';
 import '../widgets/task_tile.dart';
 import 'app_dialog.dart';
-import 'date_pick.dart' show pickDateTime;
+import 'date_pick.dart' show atDefaultHour, pickDateTime;
 import 'routine_edit_dialog.dart' show routineSubtitle;
 
 /// 六行网格之外还要摆下的高度：组件自己的页头与星期行、分隔线、输入行，再加
 /// 当天列表最小的可见高度。键盘抬起后可用高度变小，网格按它再夹一道
 /// （`build` 里传给 [MonthCalendar.gridMaxHeight]）。
 const double _kNonGridHeight = 200;
-
-/// 长按某天加进来的任务落在当天 18:00——与新建流程里截止型的默认时刻同一档。
-const int _kNewTaskHour = 18;
 
 /// 输入行尾那两颗按钮：M3 默认 48dp 见方，一行里横向吃掉近 100dp；收到 34dp。
 final ButtonStyle _compactIcon = IconButton.styleFrom(
@@ -138,15 +135,16 @@ class _CalendarDialogState extends State<_CalendarDialog> {
     });
   }
 
-  Future<void> _submitAdd(String title) async {
+  Future<void> _submitAdd(String title, TaskType type) async {
     final text = title.trim();
     final day = _selected;
     if (text.isEmpty || day == null) return;
     setState(() => _adding = false); // 输入行先收，键盘随之落下
     await widget.controller.createTask(
       title: text,
-      type: TaskType.flex,
-      deadline: DateTime(day.year, day.month, day.day, _kNewTaskHour),
+      type: type,
+      // 时刻跟着类型走（截止 18:00 / 开始 12:00），与新建流程同一处默认值。
+      deadline: atDefaultHour(day, type),
     );
     if (!mounted) return;
     setState(() {});
@@ -212,7 +210,7 @@ class _DayList extends StatelessWidget {
 
   /// 顶部输入行是否升起（长按某天进来）。
   final bool adding;
-  final ValueChanged<String> onCreate;
+  final void Function(String title, TaskType type) onCreate;
   final VoidCallback onCancelAdd;
 
   const _DayList({
@@ -238,7 +236,7 @@ class _DayList extends StatelessWidget {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (adding) _AddRow(day: day, onSubmit: onCreate, onCancel: onCancelAdd),
+          if (adding) _AddRow(onSubmit: onCreate, onCancel: onCancelAdd),
           if (!adding)
             Padding(
               padding: const EdgeInsets.all(14),
@@ -252,7 +250,7 @@ class _DayList extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (adding) _AddRow(day: day, onSubmit: onCreate, onCancel: onCancelAdd),
+        if (adding) _AddRow(onSubmit: onCreate, onCancel: onCancelAdd),
         // 条目多了要能滚：输入行吃掉的高度不能让列表溢出（弹窗高度有上限）。
         Flexible(
           child: ListView(
@@ -305,15 +303,15 @@ class _DayList extends StatelessWidget {
   }
 }
 
-/// 当天列表顶部那一行：敲标题、回车即落账（§6.4）。左侧标着落在哪一天，
-/// 免得长按错了一天却不知道落去了哪里。
+/// 当天列表顶部那一行：敲标题、回车即落账（§6.4）。
+///
+/// 行首那颗按钮是**类型开关**（默认「截止」）。原来这里是日期标签——日期已经在
+/// 月历上选过、那一格还亮着，写在这里是重复；同一块地方不如拿来多给一个判断。
 class _AddRow extends StatefulWidget {
-  final DateTime day;
-  final ValueChanged<String> onSubmit;
+  final void Function(String title, TaskType type) onSubmit;
   final VoidCallback onCancel;
 
   const _AddRow({
-    required this.day,
     required this.onSubmit,
     required this.onCancel,
   });
@@ -326,6 +324,10 @@ class _AddRowState extends State<_AddRow> {
   final _ctrl = TextEditingController();
   final _focus = FocusNode();
 
+  /// 这一件落成什么类型。**每一件都从「截止」开始**：输入行每次升起都是新的
+  /// `_AddRowState`，初值就是这个字段——不记上一件的选择，省得混着加的时候猜错。
+  TaskType _type = TaskType.flex;
+
   @override
   void dispose() {
     _ctrl.dispose();
@@ -333,22 +335,24 @@ class _AddRowState extends State<_AddRow> {
     super.dispose();
   }
 
-  void _submit() => widget.onSubmit(_ctrl.text);
+  void _submit() => widget.onSubmit(_ctrl.text, _type);
+
+  void _toggleType() {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _type = _type == TaskType.flex ? TaskType.fixed : TaskType.flex;
+    });
+    // 换类型不该把键盘收走：焦点还给输入框，接着敲标题。
+    _focus.requestFocus();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final d = widget.day;
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 0),
       child: Row(
         children: [
-          Text(
-            '${d.month}-${d.day.toString().padLeft(2, '0')}',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
+          _TypeChip(type: _type, onTap: _toggleType),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
@@ -379,6 +383,57 @@ class _AddRowState extends State<_AddRow> {
             onPressed: _submit,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 类型开关：显示「截止」或「开始」，点一下换另一个。
+///
+/// 文字取**日历点色**（橙 = 开始、靛蓝 = 截止，见 ui-interaction.md §8 的色板）：
+/// 月历格子里那颗粒子、当天列表的时间签已经是这套语言，这里再讲一遍不用学第二套；
+/// 切到「开始」时颜色由靛蓝变橙，本身就是"分类刚改过"的反馈。字号与时间签同档
+/// （11.5）——它是这一行里的标签，不是主按钮。
+class _TypeChip extends StatelessWidget {
+  final TaskType type;
+  final VoidCallback onTap;
+
+  const _TypeChip({required this.type, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final dots = AppColors.preset.dotsFor(Theme.of(context).brightness);
+    final fixed = type == TaskType.fixed;
+    final color = fixed ? dots.start : dots.deadline;
+    final label = fixed ? '开始' : '截止';
+
+    return Semantics(
+      button: true,
+      label: '任务类型：$label，点按切换',
+      // 按钮自己会念一遍，别再让里面那个 Text 叠一句「截止 button」。
+      excludeSemantics: true,
+      child: Material(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: color.withValues(alpha: 0.40)),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -134,6 +134,39 @@ void main() {
     expect(find.text('买牛奶'), findsOneWidget, reason: '当天列表立刻看得见');
   });
 
+  testWidgets('类型开关：默认截止，点一下换开始，落点跟着换 12:00', (tester) async {
+    final controller = await build(tester);
+    await open(tester, controller);
+
+    final now = DateTime.now();
+    await tester.longPress(dayCell(now.day));
+    await tester.pumpAndSettle();
+    expect(find.text('截止'), findsOneWidget, reason: '长按进来默认截止型');
+    expect(find.text('开始'), findsNothing);
+
+    await tester.tap(find.text('截止'));
+    await tester.pumpAndSettle();
+    expect(find.text('开始'), findsOneWidget, reason: '点一下切成开始型');
+    expect(find.text('截止'), findsNothing);
+    expect(find.byType(TextField), findsOneWidget, reason: '换类型不收起输入行');
+
+    await tester.enterText(find.byType(TextField), '九点开会');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    final created = controller.tasks.where((t) => t.title == '九点开会').toList();
+    expect(created, hasLength(1));
+    expect(created.single.type, TaskType.fixed, reason: '开始型');
+    expect(created.single.deadline, DateTime(now.year, now.month, now.day, 12),
+        reason: '开始型落 12:00，与新建流程同一档');
+
+    // 再长按一次：不记上一件的选择，回到默认的截止型。
+    await tester.longPress(dayCell(now.day));
+    await tester.pumpAndSettle();
+    expect(find.text('截止'), findsOneWidget);
+    expect(find.text('开始'), findsNothing, reason: '每件都从「截止」开始');
+  });
+
   testWidgets('三种点各归其位：开始型 / 截止型 / 已干完', (tester) async {
     final controller = await build(tester); // 建好了一件今天的截止型
     final now = DateTime.now();
