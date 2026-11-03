@@ -7,10 +7,14 @@ Windows 上是一个四页横滑的面板，安卓上是一枚随时拖出来的
 Windows 10/11 · Android · MIT
 
 <p align="center">
-  <img src="docs/images/today.png" width="240" alt="今日清单：逾期 / 固定时点 / 可推三组">
-  <img src="docs/images/pool.png" width="240" alt="任务池：计划段与散件">
-  <img src="docs/images/new-task.png" width="240" alt="新建待办：三无 / 有截止 / 定点">
+  <img src="assets/branding/app_icon_512.png" width="112" alt="启行">
 </p>
+
+<p align="center">
+  <img src="docs/images/sidebar.gif" width="300" alt="把把手从屏幕边缘拖出来，四页横滑，再拖回去收起">
+</p>
+
+<p align="center"><sub>安卓：把手常在屏幕边缘，拖出来是四页，拖回去就收起——不占桌面</sub></p>
 
 ## 它和普通待办的区别
 
