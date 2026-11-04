@@ -161,6 +161,9 @@ class _PlanOverlayState extends State<PlanOverlay> {
                   branch ? '$count 条线' : '$count 项',
                   style: theme.textTheme.labelMedium?.copyWith(color: hint),
                 ),
+              // 每日循环只在今天页摆：昨天是记录，明天是"已经落下的那一份"，开关
+              // 都只对"今天这一天的视角"有意义（panels/plan.md『每日循环』）。
+              if (!branch && _index == _todayIndex) _repeatButton(theme),
             ],
           ),
           if (!branch)
@@ -174,11 +177,32 @@ class _PlanOverlayState extends State<PlanOverlay> {
     );
   }
 
+  /// 今天页页头那颗循环箭头（panels/plan.md『每日循环』）。
+  ///
+  /// 关闭时点一下直接把今天这份固定成模板；已开启时点开那张小面板，改模板或关掉。
+  /// 和昨天页那枚只读小锁分开：那颗是"这一天不能改"，这颗是"每天照这份来"。
+  Widget _repeatButton(ThemeData theme) {
+    final on = widget.controller.planRepeatEnabled;
+    return IconButton(
+      tooltip: on ? '每日循环已开' : '固定成每天',
+      iconSize: 18,
+      style: IconButton.styleFrom(
+        minimumSize: const Size(32, 32),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      color: on ? AppColors.accent : theme.colorScheme.onSurfaceVariant,
+      icon: Icon(on ? Icons.repeat_on : Icons.repeat),
+      onPressed: on ? _openRepeatSheet : _enableRepeat,
+    );
+  }
+
   /// 页头那两段视图切换：当前那段强调色加粗 + 下划线，点另一个就换视图。
   ///
   /// 切换只改这一次打开看到的东西，不动数据、不改开合；下次从哪个入口进来
   /// 还是落哪个视图（[AppController.openPlan] / [AppController.openBranch]）。
-  Widget _viewTab(ThemeData theme, ArrangeView value, String label) {
+  Widget _viewTab(
+      ThemeData theme, ArrangeView value, String label) {
     final selected = widget.controller.arrangeView == value;
     final accent = AppColors.accent;
     return InkWell(
@@ -249,6 +273,45 @@ class _PlanOverlayState extends State<PlanOverlay> {
 
   static String _relativeLabel(int i) =>
       const ['昨天', '今天', '明天'][i.clamp(0, 2)];
+
+  // ---- 每日循环 ----
+
+  Future<void> _enableRepeat() async {
+    final day = _dayAt(_todayIndex);
+    if (widget.controller.planEntriesFor(day).isEmpty) {
+      _toast('先排几条，再固定成每天');
+      return;
+    }
+    final ok = await widget.controller.setPlanRepeatFrom(day);
+    if (!mounted) return;
+    _toast(ok ? '已固定：之后每天照这份生成' : '没固定上，再试一次');
+  }
+
+  Future<void> _openRepeatSheet() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (_) => _RepeatSheet(
+        count: widget.controller.planRepeatTemplate.length,
+      ),
+    );
+    if (action == null || !mounted) return;
+    final day = _dayAt(_todayIndex);
+    if (action == _RepeatAction.update) {
+      final ok = await widget.controller.setPlanRepeatFrom(day);
+      if (!mounted) return;
+      _toast(ok ? '模板已换成今天这份' : '今天还没有编排，模板没动');
+    } else if (action == _RepeatAction.off) {
+      await widget.controller.clearPlanRepeat();
+      if (!mounted) return;
+      _toast('已取消每日循环');
+    }
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 }
 
 /// 一天的编排（时间轴本体）。昨天那一页只读：照常渲染，不加、不拖、不改。
@@ -903,6 +966,57 @@ class _DayTimelineState extends State<_DayTimeline> {
 
   Future<int?> _pickTime(BuildContext context, int? current) =>
       pickPlanTime(context, current);
+}
+
+/// 循环面板的两个动作（`showModalBottomSheet` 的返回值只能用 Object 传）。
+abstract final class _RepeatAction {
+  static const String update = 'update';
+  static const String off = 'off';
+}
+
+/// 已开启循环时点箭头：改模板，或者关掉。
+///
+/// 模板不在这里直接编辑——它就是"某一天的编排"，要改先改今天那份再选『用今天这份
+/// 更新循环』，省掉第二套编辑界面（[panels/plan.md](../../docs/panels/plan.md)『每日循环』）。
+class _RepeatSheet extends StatelessWidget {
+  final int count;
+
+  const _RepeatSheet({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 4),
+            child: Text(
+              '每天固定 · $count 项',
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.sync, size: 20),
+            title: const Text('用今天这份更新循环'),
+            subtitle: const Text('模板换成今天这份；已经排好的日子不动'),
+            onTap: () => Navigator.pop(context, _RepeatAction.update),
+          ),
+          ListTile(
+            leading: const Icon(Icons.repeat, size: 20),
+            title: const Text('取消每日循环'),
+            subtitle: const Text('已经生成的日子留着，之后不再自动生成'),
+            onTap: () => Navigator.pop(context, _RepeatAction.off),
+          ),
+          const SizedBox(height: 6),
+        ],
+      ),
+    );
+  }
 }
 
 /// 改一条编排：标题 + 时刻 + 删除。

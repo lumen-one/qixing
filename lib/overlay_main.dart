@@ -92,6 +92,9 @@ Future<_OverlayCore> _assembleOverlayCore() async {
     repo: MarkdownPlanRepository(resolved.taskDir),
   );
   await plans.load();
+  // 每日循环（panels/plan.md『每日循环』）：两个引擎都会生成，幂等——模板一样，
+  // 生成出来的内容一样；谁先起来都不会让今天空着。
+  await plans.ensureRepeatAround(DateTime.now());
 
   // 支线（§6.12）：同一份 `支线.md`，各持一个服务实例（读整份 → 改一段 →
   // 整份写回）。标题同样按本引擎内存里的任务实时值重写。

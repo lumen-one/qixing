@@ -20,23 +20,25 @@ class MarkdownPlanRepository implements PlanRepository {
   List<String> get warnings => List.unmodifiable(_warnings);
 
   @override
-  Future<List<DayPlan>> loadAll() async {
+  Future<PlanDocument> load() async {
     _warnings.clear();
-    if (!_file.existsSync()) return const [];
+    if (!_file.existsSync()) return PlanDocument();
     try {
       final raw = await _file.readAsString();
       final result = codec.decode(raw);
       _warnings.addAll(result.warnings);
-      return result.days;
+      return PlanDocument(days: result.days, template: result.template);
     } catch (e) {
       _warnings.add('编排.md: $e');
-      return const [];
+      return PlanDocument();
     }
   }
 
   @override
-  Future<void> saveAll(List<DayPlan> days) async {
+  Future<void> save(PlanDocument doc) async {
     await _file.parent.create(recursive: true);
-    await _file.writeAsString(codec.encode(days));
+    await _file.writeAsString(
+      codec.encode(doc.days, template: doc.template),
+    );
   }
 }

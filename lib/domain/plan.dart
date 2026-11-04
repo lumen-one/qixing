@@ -62,13 +62,52 @@ class DayPlan {
 
   final List<PlanEntry> entries;
 
-  DayPlan({required this.day, List<PlanEntry> entries = const []})
-      : entries = List.unmodifiable(entries);
+  /// 这一天是每日循环生成出来的（文件里段头带 `·循环`）。
+  ///
+  /// 唯一的用处：那天被删空之后段还留着，下一次生成看到"有段"就跳过；普通的日子空了
+  /// 就不落段（[panels/plan.md](../../docs/panels/plan.md)『每日循环』）。
+  final bool repeated;
+
+  DayPlan({
+    required this.day,
+    List<PlanEntry> entries = const [],
+    this.repeated = false,
+  }) : entries = List.unmodifiable(entries);
 
   bool get isEmpty => entries.isEmpty;
 
   @override
-  String toString() => 'DayPlan(${planDayKey(day)}, ${entries.length} 条)';
+  String toString() => 'DayPlan(${planDayKey(day)}, ${entries.length} 条'
+      '${repeated ? ', 循环' : ''})';
+}
+
+/// 整份 `编排.md`：所有日子 + 每日循环的模板。
+///
+/// 模板必须和日子一起整份读写——写回是"正文按模型重写"，只写日子会把模板抹掉。
+/// 模板为空 = 没有开循环。
+class PlanDocument {
+  final List<DayPlan> days;
+
+  /// 每日循环的模板条目；空 = 不循环。
+  final List<PlanEntry> template;
+
+  PlanDocument({
+    List<DayPlan> days = const [],
+    List<PlanEntry> template = const [],
+  })  : days = List.unmodifiable(days),
+        template = List.unmodifiable(template);
+
+  bool get hasRepeat => template.isNotEmpty;
+
+  PlanDocument copyWith({List<DayPlan>? days, List<PlanEntry>? template}) =>
+      PlanDocument(
+        days: days ?? this.days,
+        template: template ?? this.template,
+      );
+
+  @override
+  String toString() =>
+      'PlanDocument(${days.length} 天, 模板 ${template.length} 条)';
 }
 
 /// 按时刻升序重排一天：有时刻的在前（同一时刻保持原相对顺序），没有时刻的按原相对顺序

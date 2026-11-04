@@ -93,6 +93,9 @@ Future<void> main() async {
   // 读失败不阻塞启动（时间轴先空着，回前台再读一次）。
   final planService = PlanService(repo: MarkdownPlanRepository(taskDir));
   await planService.load();
+  // 每日循环（panels/plan.md『每日循环』）：今天和明天没有段就照模板落一份。
+  // 放在启动这一趟里，`landOnPlanForToday` 才认得出"今天已经排过"。
+  await planService.ensureRepeatAround(DateTime.now());
 
   // 支线（§6.12）：第五份数据（`支线.md`），条目是任务 id 的引用。标题由服务在
   // 落盘时按任务的实时值重写——application 层不认识 TaskService，靠这个函数注入。

@@ -3,6 +3,7 @@ import 'package:qixing/application/plan_service.dart';
 import 'package:qixing/domain/plan.dart';
 import 'package:qixing/repository/markdown_plan_codec.dart';
 import 'package:qixing/repository/memory_plan_repository.dart';
+import 'package:qixing/repository/plan_repository.dart';
 
 /// 今日编排（§6.11 / 附录 B.7）：格式往返 + 命令语义。
 void main() {
@@ -277,6 +278,160 @@ void main() {
     test('下标越界：原样返回', () {
       final next = [e('A', 870)];
       expect(identical(alignPlanEntryTime(next, 3), next), isTrue);
+    });
+  });
+
+  group('每日循环', () {
+    final today = DateTime(2026, 10, 22);
+    final tomorrow = DateTime(2026, 10, 23);
+    const template = [
+      PlanEntry(title: '学习课程', minutesOfDay: 9 * 60 + 30),
+      PlanEntry(title: '整理笔记', minutesOfDay: 23 * 60 + 50),
+    ];
+
+    test('编码：模板段在最前，日期段带 ·循环；解码认回来', () {
+      final codec = MarkdownPlanCodec();
+      final raw = codec.encode(
+        [
+          DayPlan(
+            day: today,
+            entries: const [PlanEntry(title: '学习课程', minutesOfDay: 570)],
+            repeated: true,
+          ),
+        ],
+        template: template,
+      );
+      expect(raw, startsWith('### 循环\n'));
+      expect(raw, contains('### 2026-10-22 ·循环\n'));
+
+      final back = codec.decode(raw);
+      expect(back.template, hasLength(2));
+      expect(back.template.first.title, '学习课程');
+      expect(back.days.single.repeated, isTrue);
+      expect(back.days.single.entries.single.title, '学习课程');
+    });
+
+    test('编码：循环生成的日子删空后段还在，普通日子空了不落段', () {
+      final raw = MarkdownPlanCodec().encode([
+        DayPlan(day: today, repeated: true),
+        DayPlan(day: tomorrow),
+      ]);
+      expect(raw, '### 2026-10-22 ·循环\n');
+
+      final back = MarkdownPlanCodec().decode(raw);
+      expect(back.days.single.day, today);
+      expect(back.days.single.entries, isEmpty);
+      expect(back.days.single.repeated, isTrue);
+    });
+
+    test('没有段的一天照模板落一份，再问一次什么都不做', () async {
+      final repo = MemoryPlanRepository(const [], template);
+      final svc = PlanService(repo: repo);
+      await svc.load();
+
+      expect(await svc.ensureRepeatFor(today), isTrue);
+      expect([for (final e in svc.entriesFor(today)) e.title],
+          ['学习课程', '整理笔记']);
+      expect((await repo.load()).days.single.repeated, isTrue);
+
+      expect(await svc.ensureRepeatFor(today), isFalse);
+      expect((await repo.load()).days, hasLength(1));
+    });
+
+    test('已有段的一天不生成：用户排过的不被模板盖回去', () async {
+      final repo = MemoryPlanRepository([
+        DayPlan(day: today, entries: const [
+          PlanEntry(title: '自己的排法', minutesOfDay: 600),
+        ]),
+      ], template);
+      final svc = PlanService(repo: repo);
+      await svc.load();
+
+      expect(await svc.ensureRepeatFor(today), isFalse);
+      expect(svc.entriesFor(today).single.title, '自己的排法');
+    });
+
+    test('改动只留在当天：模板不跟着变，第二天还是原样', () async {
+      final repo = MemoryPlanRepository(const [], template);
+      final svc = PlanService(repo: repo);
+      await svc.load();
+      await svc.ensureRepeatFor(today);
+
+      await svc.updateEntry(
+          today, 0, const PlanEntry(title: '改过', minutesOfDay: 600));
+      expect(svc.repeatTemplate.first.title, '学习课程');
+
+      await svc.ensureRepeatFor(tomorrow);
+      expect(svc.entriesFor(tomorrow).first.title, '学习课程');
+    });
+
+    test('当天删光不会复活：空段留着挡住下一次生成', () async {
+      final repo = MemoryPlanRepository(const [], template);
+      final svc = PlanService(repo: repo);
+      await svc.load();
+      await svc.ensureRepeatFor(today);
+
+      await svc.removeEntry(today, 0);
+      await svc.removeEntry(today, 0);
+      expect(svc.entriesFor(today), isEmpty);
+      expect(svc.hasDay(today), isTrue);
+      expect(await svc.ensureRepeatFor(today), isFalse);
+
+      final disk = (await repo.load()).days.single;
+      expect(disk.entries, isEmpty);
+      expect(disk.repeated, isTrue);
+    });
+
+    test('开启：把今天整份设成模板，并给明天落一份', () async {
+      final repo = MemoryPlanRepository([
+        DayPlan(day: today, entries: const [
+          PlanEntry(title: '晨会', minutesOfDay: 8 * 60),
+        ]),
+      ]);
+      final svc = PlanService(repo: repo);
+      await svc.load();
+
+      expect(await svc.setRepeatFrom(today), isTrue);
+      expect(svc.repeatTemplate.single.title, '晨会');
+
+      expect(await svc.ensureRepeatAround(today), 1);
+      expect(svc.entriesFor(tomorrow).single.title, '晨会');
+      // 今天本来就有段，不会被当成"新生成的一天"。
+      expect(svc.days, hasLength(2));
+    });
+
+    test('空的一天开不了循环', () async {
+      final svc = PlanService(repo: MemoryPlanRepository());
+      await svc.load();
+      expect(await svc.setRepeatFrom(today), isFalse);
+      expect(svc.repeatTemplate, isEmpty);
+    });
+
+    test('取消：模板与记号一起清掉，已有的日子一条不删', () async {
+      final repo = MemoryPlanRepository(const [], template);
+      final svc = PlanService(repo: repo);
+      await svc.load();
+      await svc.ensureRepeatAround(today);
+      expect(svc.days, hasLength(2));
+
+      await svc.clearRepeat();
+      expect(svc.repeatTemplate, isEmpty);
+      expect(svc.days, hasLength(2));
+      expect(svc.entriesFor(today), hasLength(2));
+      expect(svc.days.every((d) => !d.repeated), isTrue);
+      expect(await svc.ensureRepeatFor(today), isFalse);
+    });
+
+    test('取消之后，删空留下的空循环段不再留在文件里', () async {
+      final repo = MemoryPlanRepository(const [], template);
+      final svc = PlanService(repo: repo);
+      await svc.load();
+      await svc.ensureRepeatFor(today);
+      await svc.removeEntry(today, 0);
+      await svc.removeEntry(today, 0);
+
+      await svc.clearRepeat();
+      expect((await repo.load()).days, isEmpty);
     });
   });
 }

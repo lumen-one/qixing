@@ -355,6 +355,9 @@ class AppController extends ChangeNotifier {
     planPull.value = 0;
     planDragging.value = false;
     notifyListeners();
+    // 每天固定生成的那一份落在"打开这一刻"：面板立起来了才补内容，第一帧就是生成后
+    // 的样子（幂等，别处已经生成过就什么都不做）。
+    unawaited(ensurePlanRepeat());
   }
 
   /// 从今日页日期行打开支线视图（§6.12）：与 [openPlan] 共用同一块覆盖页，
@@ -624,6 +627,9 @@ class AppController extends ChangeNotifier {
     _ticking = true;
     try {
       await syncRoutineInstancesIfNewDay();
+      // 每日循环：跨过零点后"今天"还没有段，照模板落一份（明天那份也顺手补上）。
+      // 幂等，不生成时零写盘。
+      await ensurePlanRepeat();
       // 跨日回挂（决议 47）：挂起是"每天做一点"，换了一天就重新挂上。同一天里点掉
       // 再重启不会跳回来（`in_progress_daily` 记着"今天做过"），所以这个调用是无状态
       // 的幂等判断，值得每 tick 都问一次；真挂了件会发事件，界面照事件刷新。
@@ -840,6 +846,43 @@ class AppController extends ChangeNotifier {
   /// 整日重写（拖动改顺序）。
   Future<void> setPlanEntries(DateTime day, List<PlanEntry> entries) =>
       _planCommand((svc) => svc.setEntries(day, entries));
+
+  /// 每日循环的模板；空 = 没开（panels/plan.md『每日循环』）。
+  List<PlanEntry> get planRepeatTemplate =>
+      planService?.repeatTemplate ?? const [];
+
+  bool get planRepeatEnabled => planRepeatTemplate.isNotEmpty;
+
+  /// 开启循环 / 用今天这份更新循环——同一个动作：把那天整份存成模板。
+  ///
+  /// 返回 false = 那天没排东西（模板里没有内容，"每天固定"就固定了一个空）。
+  Future<bool> setPlanRepeatFrom(DateTime day) async {
+    final svc = planService;
+    if (svc == null) return false;
+    final ok = await svc.setRepeatFrom(day);
+    if (!ok) return false;
+    // 新模板立刻对"明天"生效（它还没有段就补一份）；今天那一份本来就在。
+    await ensurePlanRepeat(now: day);
+    notifyListeners();
+    return true;
+  }
+
+  /// 关掉循环：模板段删掉，已有的日子一条不动，只抹掉循环记号。
+  Future<void> clearPlanRepeat() async {
+    final svc = planService;
+    if (svc == null) return;
+    await svc.clearRepeat();
+    notifyListeners();
+  }
+
+  /// 今天和明天没有段就照着模板落一份。幂等且便宜（内存里已有那两天就不读盘），
+  /// 启动 / 跨日 tick / 打开编排页三处随便调。
+  Future<void> ensurePlanRepeat({DateTime? now}) async {
+    final svc = planService;
+    if (svc == null) return;
+    final created = await svc.ensureRepeatAround(planDay(now ?? DateTime.now()));
+    if (created > 0) notifyListeners();
+  }
 
   Future<void> _planCommand(Future<void> Function(PlanService svc) op) async {
     final svc = planService;

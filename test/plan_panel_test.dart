@@ -28,10 +28,10 @@ class _StuckPlanRepository implements PlanRepository {
   List<String> get warnings => const [];
 
   @override
-  Future<List<DayPlan>> loadAll() async => List.of(_days);
+  Future<PlanDocument> load() async => PlanDocument(days: List.of(_days));
 
   @override
-  Future<void> saveAll(List<DayPlan> days) => saved.future;
+  Future<void> save(PlanDocument doc) => saved.future;
 }
 
 /// 今日编排（§6.11）：下拉进覆盖页、时间轴渲染、添加与拖动。
@@ -675,5 +675,77 @@ void main() {
 
     final review = tester.getCenter(find.text('评审')).dy;
     expect(review, lessThan(tester.getCenter(find.text('晨会')).dy));
+  });
+
+  // ---- 每日循环（panels/plan.md『每日循环』）----
+
+  testWidgets('每日循环：今天页点箭头就把这份固定下来，明天也落一份', (tester) async {
+    final c = makeController(plan: [
+      DayPlan(day: day, entries: const [
+        PlanEntry(title: '晨会', minutesOfDay: 8 * 60),
+      ]),
+    ]);
+    await c.planService!.load();
+    await pumpOverlay(tester, c);
+
+    expect(find.byIcon(Icons.repeat), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.repeat));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.repeat_on), findsOneWidget);
+    expect(c.planRepeatTemplate.single.title, '晨会');
+    // 明天还没有段：开启的同一趟里落一份，晚上点明天页就看得见。
+    expect(c.planEntriesFor(DateTime(2026, 10, 23)).single.title, '晨会');
+  });
+
+  testWidgets('每日循环：已开启时点箭头能取消', (tester) async {
+    final c = makeController(plan: [
+      DayPlan(day: day, entries: const [
+        PlanEntry(title: '晨会', minutesOfDay: 8 * 60),
+      ]),
+    ]);
+    await c.planService!.load();
+    await c.setPlanRepeatFrom(day);
+    await pumpOverlay(tester, c);
+    expect(find.byIcon(Icons.repeat_on), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.repeat_on));
+    await tester.pumpAndSettle();
+    expect(find.text('取消每日循环'), findsOneWidget);
+
+    await tester.tap(find.text('取消每日循环'));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.repeat), findsOneWidget);
+    expect(c.planRepeatEnabled, isFalse);
+  });
+
+  testWidgets('每日循环：只有今天页摆箭头，昨天页只留那颗只读锁', (tester) async {
+    final c = makeController(plan: [
+      DayPlan(day: day, entries: const [
+        PlanEntry(title: '晨会', minutesOfDay: 8 * 60),
+      ]),
+    ]);
+    await c.planService!.load();
+    await pumpOverlay(tester, c);
+    expect(find.byIcon(Icons.repeat), findsOneWidget);
+
+    await tester.tap(find.text('昨天 21'));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.repeat), findsNothing);
+    expect(find.byIcon(Icons.repeat_on), findsNothing);
+    expect(find.byIcon(Icons.lock_outline), findsOneWidget);
+  });
+
+  testWidgets('每日循环：今天还空着，点箭头只给一句提示', (tester) async {
+    final c = makeController();
+    await pumpOverlay(tester, c);
+
+    await tester.tap(find.byIcon(Icons.repeat));
+    await tester.pumpAndSettle();
+
+    expect(find.text('先排几条，再固定成每天'), findsOneWidget);
+    expect(c.planRepeatEnabled, isFalse);
   });
 }

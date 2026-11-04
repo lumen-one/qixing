@@ -3,20 +3,22 @@ import 'plan_repository.dart';
 
 /// 内存实现（测试与仿真用；不落盘）。
 class MemoryPlanRepository implements PlanRepository {
-  List<DayPlan> _days;
+  PlanDocument _doc;
   final List<String> _warnings = [];
 
-  MemoryPlanRepository([List<DayPlan> initial = const []])
-      : _days = List.of(initial);
+  MemoryPlanRepository([
+    List<DayPlan> initial = const [],
+    List<PlanEntry> template = const [],
+  ]) : _doc = PlanDocument(days: initial, template: template);
 
   @override
   List<String> get warnings => List.unmodifiable(_warnings);
 
   @override
-  Future<List<DayPlan>> loadAll() async => List.of(_days);
+  Future<PlanDocument> load() async => _doc;
 
   @override
-  Future<void> saveAll(List<DayPlan> days) async {
-    _days = List.of(days);
+  Future<void> save(PlanDocument doc) async {
+    _doc = doc;
   }
 }
