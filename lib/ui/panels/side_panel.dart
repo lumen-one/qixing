@@ -16,6 +16,7 @@ import 'completed_panel.dart';
 import 'mainline_panel.dart';
 import 'plan_panel.dart';
 import 'pool_panel.dart';
+import 'speednote_panel.dart';
 import 'today_panel.dart';
 
 /// 侧边栏面板本体（§5.1：panels 平台无关，只被 shell 摆放）。
@@ -245,7 +246,7 @@ class _SidePanelState extends State<SidePanel> {
           Positioned.fill(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(20),
-              child: _PlanReveal(
+              child: PullOverlayReveal(
                 open: controller.planOpen,
                 instantEnter: controller.planEnterInstant,
                 pull: controller.planPull,
@@ -255,6 +256,25 @@ class _SidePanelState extends State<SidePanel> {
                 child: PlanOverlay(
                   controller: controller,
                   onClose: controller.closePlan,
+                ),
+              ),
+            ),
+          ),
+          // 速记覆盖页（§6.13）：灵感页滚到顶再下拉，或点功能栏那颗图标。
+          // 与编排同一套开合、同一套跟手行程、同一套上滑退出。
+          Positioned.fill(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: PullOverlayReveal(
+                open: controller.speedNoteOpen,
+                instantEnter: controller.speedNoteEnterInstant,
+                pull: controller.speedNotePull,
+                dragging: controller.speedNoteDragging,
+                exit: controller.speedNoteExit,
+                exiting: controller.speedNoteExiting,
+                child: SpeedNoteOverlay(
+                  controller: controller,
+                  onClose: controller.closeSpeedNote,
                 ),
               ),
             ),
@@ -308,10 +328,15 @@ class _SidePanelState extends State<SidePanel> {
 
   /// 页 → 页面本体：页序由 [PanelPage] 决定，这里只做"哪一页放哪个面板"。
   ///
-  /// 今日页单独放开鼠标拖拽（§6.11）：桌面没有触屏，编排的入口得靠"按住鼠标
-  /// 拖到顶再往下拖"复现同一条手势；只包这一页，别的列表不受影响。
+  /// 今日页与灵感页单独放开鼠标拖拽（§6.11 / §6.13）：桌面没有触屏，编排与速记的
+  /// 入口得靠"按住鼠标拖到顶再往下拖"复现同一条手势；只包这两页，别的列表不受影响。
   Widget _pageBody(PanelPage page, AppController controller) => switch (page) {
-        PanelPage.notes => NotesPanel(controller: controller),
+        PanelPage.notes => ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: PointerDeviceKind.values.toSet(),
+            ),
+            child: NotesPanel(controller: controller),
+          ),
         PanelPage.today => ScrollConfiguration(
             behavior: ScrollConfiguration.of(context).copyWith(
               dragDevices: PointerDeviceKind.values.toSet(),
@@ -526,18 +551,22 @@ class _MainlineRevealState extends State<_MainlineReveal>
   }
 }
 
-/// 今日编排覆盖页的进出过渡（§6.11）：**跟手**，不是定长动画。
+/// 下拉打开的覆盖页的进出过渡（编排 §6.11 / 速记 §6.13）：**跟手**，不是定长动画。
 ///
 /// 与 [_MainlineReveal] 的差别只在驱动源：主线是"点一下 → 播 260ms"，
-/// 编排是"手指往下拉多少，它就露多少"，松手才补满或弹回。跟手行程由今日页
+/// 这里是"手指往下拉多少，它就露多少"，松手才补满或弹回。跟手行程由底下那一页
 /// 从 `OverscrollNotification` 里喂给控制器（逻辑像素），这里除以自己的高度换成
 /// 0–1；不足一指的高度差看不出来。
-class _PlanReveal extends StatefulWidget {
-  /// 覆盖页该不该在（= `AppController.planOpen`）。
+///
+/// 两种入口（下滑手势 / 页头一颗图标）共用它：`instantEnter` 区分"面板正被手指
+/// 拉着"与"面板早已在屏幕上"。
+class PullOverlayReveal extends StatefulWidget {
+  /// 覆盖页该不该在（= `AppController.planOpen` / `speedNoteOpen`）。
   final bool open;
 
   /// 打开时直接落位、不播补满动画（= 面板自己正滑进来，覆盖页得第一帧就在）。
-  /// 点日期行按钮打开支线时为 false：那时面板早已在屏幕上，凭空出现才是怪事。
+  /// 点日期行按钮打开支线、点图标进速记时为 false：那时面板早已在屏幕上，
+  /// 凭空出现才是怪事。
   final bool instantEnter;
 
   /// 跟手行程（逻辑像素；0 = 完全藏起来）。
@@ -554,7 +583,8 @@ class _PlanReveal extends StatefulWidget {
 
   final Widget child;
 
-  const _PlanReveal({
+  const PullOverlayReveal({
+    super.key,
     required this.open,
     required this.instantEnter,
     required this.pull,
@@ -565,10 +595,10 @@ class _PlanReveal extends StatefulWidget {
   });
 
   @override
-  State<_PlanReveal> createState() => _PlanRevealState();
+  State<PullOverlayReveal> createState() => _PullOverlayRevealState();
 }
 
-class _PlanRevealState extends State<_PlanReveal>
+class _PullOverlayRevealState extends State<PullOverlayReveal>
     with SingleTickerProviderStateMixin {
   /// 松手后的补满 / 弹回（与主线的退场同一档）。
   static const Duration _settle = Duration(milliseconds: 200);
@@ -608,7 +638,7 @@ class _PlanRevealState extends State<_PlanReveal>
   }
 
   @override
-  void didUpdateWidget(covariant _PlanReveal oldWidget) {
+  void didUpdateWidget(covariant PullOverlayReveal oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.pull != widget.pull) {
       oldWidget.pull.removeListener(_onPull);

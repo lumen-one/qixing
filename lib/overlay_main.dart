@@ -6,12 +6,14 @@ import 'application/branch_service.dart';
 import 'application/mainline_service.dart';
 import 'application/plan_service.dart';
 import 'application/routine_service.dart';
+import 'application/speednote_service.dart';
 import 'application/task_service.dart';
 import 'domain/time_context.dart';
 import 'platform/app_adapters.dart';
 import 'repository/markdown_branch_repository.dart';
 import 'repository/markdown_mainline_repository.dart';
 import 'repository/markdown_plan_repository.dart';
+import 'repository/markdown_speednote_repository.dart';
 import 'repository/markdown_routine_repository.dart';
 import 'repository/markdown_task_repository.dart';
 import 'scheduler/slack_priority_scheduler.dart';
@@ -104,6 +106,13 @@ Future<_OverlayCore> _assembleOverlayCore() async {
   );
   await branches.load();
 
+  // 速记（§6.13）：同一份 `速记.md`，各持一个服务实例（读整份 → 改一条 →
+  // 整份写回，两个引擎同时改按后写者胜）。
+  final speedNotes = SpeedNoteService(
+    repo: MarkdownSpeedNoteRepository(resolved.taskDir),
+  );
+  await speedNotes.load();
+
   final controller = AppController(
     service: service,
     taskDir: resolved.taskDir,
@@ -111,6 +120,7 @@ Future<_OverlayCore> _assembleOverlayCore() async {
     mainlineService: mainlines,
     planService: plans,
     branchService: branches,
+    speedNoteService: speedNotes,
     settingsPort: FileSettingsPort(resolved.taskDir),
     bootstrapPort: resolved.bootstrap,
     // 调度模式也要跟上（面板不装交付插座，但清单的"排什么顺序、会不会响"口径

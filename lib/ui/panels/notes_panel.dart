@@ -4,6 +4,7 @@ import '../../application/notes_markdown.dart';
 import '../../application/notes_reader.dart';
 import '../app_controller.dart';
 import '../theme.dart';
+import '../widgets/notes_blocks.dart';
 
 /// 灵感页（ui-interaction.md §6.2；页序见 `ui/panel_pages.dart`）。
 /// 数据源 = 用户在 Obsidian 维护的指定 Markdown（路径在设置里配）。
@@ -119,6 +120,16 @@ class _NotesPanelState extends State<NotesPanel> {
                   onPressed: _saving ? null : _save,
                 ),
               ] else ...[
+                // 速记覆盖页的显式入口（§6.13）：下拉那一下没有视觉线索，
+                // 这一页的功能栏有位置就补一颗。编辑态里不摆——那条手势在编辑态
+                // 本来就不接，图标也不该把人带离没存下的字。
+                if (widget.controller.speedNoteService != null)
+                  _barButton(
+                    tooltip: '速记',
+                    icon: const Icon(Icons.sticky_note_2_outlined),
+                    onPressed: () =>
+                        widget.controller.openSpeedNote(instant: false),
+                  ),
                 if (result.canEdit)
                   _barButton(
                     tooltip: '编辑',
@@ -135,10 +146,34 @@ class _NotesPanelState extends State<NotesPanel> {
           ),
         ),
         const Divider(height: 1),
-        Expanded(child: _editing ? _editor(theme) : _viewer(result)),
+        Expanded(
+          child: _editing
+              ? _editor(theme)
+              : _withSpeedPull(_viewer(result)),
+        ),
       ],
     );
   }
+
+  /// 灵感页是速记的入口（§6.13）：**已经滚到顶**还继续往下拉，就把行程喂给控制器。
+  ///
+  /// 与今日页进编排同一套判据（[today_panel] 的 `_withPlanPull`）：只认手指拖
+  /// （`dragDetails != null`），鼠标滚轮与触控板"滚到头继续滚"是常态，认了就是
+  /// 天天误触；`depth != 0` 的内层通知跳过。
+  Widget _withSpeedPull(Widget child) => NotificationListener<ScrollNotification>(
+        onNotification: (n) {
+          if (n.depth != 0) return false;
+          if (n is OverscrollNotification && n.dragDetails != null) {
+            // 顶部继续下拉时 overscroll 是负的（像素已经不能再减）。
+            widget.controller.pullSpeedNote(-n.overscroll);
+          } else if (n is ScrollEndNotification) {
+            widget.controller
+                .settleSpeedNote(n.dragDetails?.velocity.pixelsPerSecond.dy ?? 0);
+          }
+          return false;
+        },
+        child: child,
+      );
 
   /// 功能栏那颗图标钮：收到 34dp。M3 默认 48dp 见方，一行图标就吃掉 62dp 高，
   /// 一半是留白——窄面板上这些留白是正文的代价。
@@ -206,12 +241,14 @@ class _NotesDocument extends StatelessWidget {
   Widget build(BuildContext context) {
     final blocks = parseNotesMarkdown(lines);
     return ListView.builder(
+      // 短正文也要能拖出 overscroll：下拉进速记靠它（§6.13）。
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
       itemCount: blocks.length,
       itemBuilder: (context, i) => Padding(
         padding: EdgeInsets.only(
             top: i == 0 ? 0 : _gapBetween(blocks[i - 1], blocks[i])),
-        child: _NotesBlockView(block: blocks[i]),
+        child: NotesBlockView(block: blocks[i]),
       ),
     );
   }
@@ -224,135 +261,6 @@ class _NotesDocument extends StatelessWidget {
       b.kind == NotesBlockKind.bullet || b.kind == NotesBlockKind.ordered;
 }
 
-class _NotesBlockView extends StatelessWidget {
-  final NotesBlock block;
-
-  const _NotesBlockView({required this.block});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final base = theme.textTheme.bodyMedium ?? const TextStyle(fontSize: 14);
-    final body = base.copyWith(height: 1.6);
-    final muted = scheme.onSurfaceVariant;
-
-    switch (block.kind) {
-      case NotesBlockKind.heading:
-        final scale = switch (block.level) {
-          1 => 1.45,
-          2 => 1.28,
-          3 => 1.14,
-          _ => 1.0,
-        };
-        final style = base.copyWith(
-          fontSize: (base.fontSize ?? 14) * scale,
-          fontWeight: block.level <= 3 ? FontWeight.w700 : FontWeight.w600,
-          height: 1.4,
-          color: block.level >= 4 ? muted : null,
-        );
-        return Text.rich(_rich(block.spans, style, scheme));
-
-      case NotesBlockKind.bullet:
-      case NotesBlockKind.ordered:
-        final marker =
-            block.kind == NotesBlockKind.ordered ? '${block.number}.' : '•';
-        return Padding(
-          padding: EdgeInsets.only(left: 14.0 * block.level),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(marker, style: body.copyWith(color: muted)),
-              const SizedBox(width: 7),
-              Expanded(child: Text.rich(_rich(block.spans, body, scheme))),
-            ],
-          ),
-        );
-
-      case NotesBlockKind.quote:
-        return Container(
-          margin: EdgeInsets.only(left: 14.0 * block.level),
-          padding: const EdgeInsets.only(left: 10),
-          decoration: BoxDecoration(
-            border: Border(
-              left: BorderSide(color: scheme.outlineVariant, width: 3),
-            ),
-          ),
-          child:
-              Text.rich(_rich(block.spans, body.copyWith(color: muted), scheme)),
-        );
-
-      case NotesBlockKind.code:
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          // 代码不折行：面板最窄 240，硬折会把缩进切断，横滑更接近原样
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Text(
-              block.spans.map((s) => s.text).join(),
-              style: base.copyWith(
-                fontFamily: 'monospace',
-                fontFamilyFallback: _monoFallback,
-                fontSize: (base.fontSize ?? 14) * 0.92,
-                height: 1.5,
-              ),
-            ),
-          ),
-        );
-
-      case NotesBlockKind.paragraph:
-        return Text.rich(_rich(block.spans, body, scheme));
-    }
-  }
-}
-
-const _monoFallback = ['Consolas', 'Courier New', 'DejaVu Sans Mono'];
-
-TextSpan _rich(List<NotesSpan> spans, TextStyle base, ColorScheme scheme) =>
-    TextSpan(
-      style: base,
-      children: [
-        for (final sp in spans) TextSpan(text: sp.text, style: _spanStyle(sp, base, scheme)),
-      ],
-    );
-
-/// 单段的附加样式。返回 null = 沿用块的底色（普通文字）。
-TextStyle? _spanStyle(NotesSpan span, TextStyle base, ColorScheme scheme) {
-  switch (span.style) {
-    case NotesSpanStyle.plain:
-      return null;
-    case NotesSpanStyle.bold:
-      return const TextStyle(fontWeight: FontWeight.w700);
-    case NotesSpanStyle.italic:
-      return const TextStyle(fontStyle: FontStyle.italic);
-    case NotesSpanStyle.boldItalic:
-      return const TextStyle(
-          fontWeight: FontWeight.w700, fontStyle: FontStyle.italic);
-    case NotesSpanStyle.strike:
-      return TextStyle(
-        decoration: TextDecoration.lineThrough,
-        decorationColor: base.color?.withValues(alpha: 0.55),
-      );
-    case NotesSpanStyle.code:
-      return TextStyle(
-        fontFamily: 'monospace',
-        fontFamilyFallback: _monoFallback,
-        fontSize: (base.fontSize ?? 14) * 0.92,
-        backgroundColor: scheme.onSurface.withValues(alpha: 0.06),
-      );
-    case NotesSpanStyle.link:
-      return TextStyle(
-        color: AppColors.accent,
-        decoration: TextDecoration.underline,
-        decorationColor: AppColors.accent.withValues(alpha: 0.45),
-      );
-  }
-}
-
 class _Empty extends StatelessWidget {
   final IconData icon;
   final String text;
@@ -360,17 +268,27 @@ class _Empty extends StatelessWidget {
   const _Empty({required this.icon, required this.text});
 
   @override
-  Widget build(BuildContext context) => Center(
-        child: FadeIn(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon,
-                  size: 40,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant),
-              const SizedBox(height: 8),
-              Text(text),
-            ],
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (ctx, constraints) => SingleChildScrollView(
+          // 未配置 / 空态也得能下拉（§6.13）：centered 的一块没有滚动，
+          // 就永远没有 overscroll，速记那一页等于进不去。
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: FadeIn(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon,
+                        size: 40,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    const SizedBox(height: 8),
+                    Text(text),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
       );

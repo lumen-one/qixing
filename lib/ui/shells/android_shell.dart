@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_controller.dart';
@@ -107,6 +109,8 @@ class _AndroidShellState extends State<AndroidShell> {
   void _closeDrawer() {
     // 覆盖页开着就先收它（§6.9 / §6.11）：返回键不该一步把面板从覆盖页里抽走
     widget.controller.closeMainline();
+    // 速记先收（它盖在面板上，编辑态要先落盘——closeSpeedNote 自己会等）。
+    unawaited(widget.controller.closeSpeedNote());
     widget.controller.closePlan();
     if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
       Navigator.of(context).pop();

@@ -11,6 +11,7 @@ import '../application/notification_window.dart';
 import '../application/notes_reader.dart';
 import '../application/plan_service.dart';
 import '../application/routine_service.dart';
+import '../application/speednote_service.dart';
 import '../application/settings.dart';
 import '../application/shell_capabilities.dart';
 import '../application/sync.dart';
@@ -22,6 +23,7 @@ import '../domain/mainline.dart';
 import '../domain/plan.dart';
 import '../domain/routine.dart';
 import '../domain/schedule.dart';
+import '../domain/speednote.dart';
 import '../domain/task.dart';
 import '../domain/time_context.dart';
 import 'panel_pages.dart';
@@ -62,6 +64,12 @@ class AppController extends ChangeNotifier {
   /// 第五份数据（`支线.md`），与 [service] / 主线 / 编排都不相交：条目是任务的
   /// id 引用，但服务本身不认识任务——标题由 [BranchService.titleOf] 注入。
   final BranchService? branchService;
+
+  /// 速记服务（panels/speednote.md §6.13；null = 未装配，灵感页的下拉与图标都不接）。
+  ///
+  /// 第六份数据（`速记.md`），与任务、周期、主线、编排、支线都不相交：一条速记既不
+  /// 产生任务，也不参与调度。
+  final SpeedNoteService? speedNoteService;
 
   final String taskDir;
 
@@ -433,6 +441,198 @@ class AppController extends ChangeNotifier {
     return true;
   }
 
+  // ---- 速记（§6.13）----
+
+  /// 速记覆盖页开着吗。与 [planOpen] 同一套理由：状态在控制器，宿主的返回键
+  /// 与覆盖页自己都问这一句。
+  bool _speedNoteOpen = false;
+
+  bool get speedNoteOpen => _speedNoteOpen;
+
+  /// 这次打开要不要跳过进场动画。下拉进来的那一路是 true（面板正被手指拉着），
+  /// 点功能栏图标进来是 false（面板早已在屏幕上，凭空出现才是怪事）。
+  bool _speedNoteEnterInstant = true;
+
+  bool get speedNoteEnterInstant => _speedNoteEnterInstant;
+
+  /// 下拉跟手的行程（逻辑像素，0 = 完全藏起来）。
+  final ValueNotifier<double> speedNotePull = ValueNotifier<double>(0);
+
+  /// 手指还按着（false = 松手，覆盖页该补满或弹回）。
+  final ValueNotifier<bool> speedNoteDragging = ValueNotifier<bool>(false);
+
+  /// 上滑退出的跟手行程。
+  final ValueNotifier<double> speedNoteExit = ValueNotifier<double>(0);
+
+  /// 手指还按着（false = 该补满或弹回）。
+  final ValueNotifier<bool> speedNoteExiting = ValueNotifier<bool>(false);
+
+  /// 当前选中的标签（速记 id）。**跨次打开保留**——切到第三条再退出，回来还在第三条；
+  /// 它不落盘（文件里没有"打开哪个标签"这一项）。
+  String? _speedNoteTab;
+
+  String? get speedNoteTabId => _speedNoteTab;
+
+  List<SpeedNote> get speedNotes => speedNoteService?.notes ?? const [];
+
+  /// 当前标签那条；标签失效（被删 / 还没选）时退回第一条。
+  SpeedNote? get currentSpeedNote {
+    final svc = speedNoteService;
+    if (svc == null || svc.notes.isEmpty) return null;
+    return svc.byId(_speedNoteTab) ?? svc.notes.first;
+  }
+
+  /// 覆盖页注入的"退出前把编辑态落盘"（自动保存的唯一时机在页面那一侧）。
+  Future<void> Function()? speedNoteFlush;
+
+  /// 灵感页在顶部继续下拉时喂进来的行程（只加正的）。
+  void pullSpeedNote(double px) {
+    if (_speedNoteOpen || px <= 0) return;
+    speedNoteDragging.value = true;
+    speedNotePull.value = (speedNotePull.value + px).clamp(0.0, 4000.0);
+  }
+
+  /// 松手：拉过阈值或向下快甩（dy > 500 px/s）就补满，否则弹回。
+  void settleSpeedNote(double velocityY) {
+    if (!speedNoteDragging.value && speedNotePull.value == 0) return;
+    final enough = speedNotePull.value >= planPullThreshold || velocityY > 500;
+    speedNoteDragging.value = false;
+    if (enough) {
+      openSpeedNote();
+    } else {
+      speedNotePull.value = 0;
+    }
+  }
+
+  void openSpeedNote({bool instant = true}) {
+    final svc = speedNoteService;
+    if (svc == null) return;
+    speedNotePull.value = 0;
+    speedNoteDragging.value = false;
+    if (_speedNoteOpen) {
+      notifyListeners();
+      return;
+    }
+    _speedNoteEnterInstant = instant;
+    _speedNoteOpen = true;
+    notifyListeners();
+    // 打开这一刻读一遍盘：另一个引擎（悬浮窗）可能刚写过。
+    unawaited(refreshSpeedNotes());
+  }
+
+  /// 关掉覆盖页。宿主的返回键 / 收起面板 / 覆盖页自己的『返回』都走这里。
+  ///
+  /// **先落盘再关**：编辑态里那点没点『完成』的字，切走不该丢（自动保存）。
+  Future<void> closeSpeedNote() async {
+    if (!_speedNoteOpen) {
+      speedNotePull.value = 0;
+      speedNoteDragging.value = false;
+      speedNoteExit.value = 0;
+      speedNoteExiting.value = false;
+      return;
+    }
+    final flush = speedNoteFlush;
+    if (flush != null) {
+      try {
+        await flush();
+      } catch (_) {
+        // 写盘失败不拦住退出：字还在输入框里，下次进来仍在。
+      }
+    }
+    _speedNoteOpen = false;
+    speedNotePull.value = 0;
+    speedNoteDragging.value = false;
+    speedNoteExit.value = 0;
+    speedNoteExiting.value = false;
+    notifyListeners();
+  }
+
+  /// 正文滚到底后继续上滑（逻辑像素，只加正的）。
+  void pullSpeedNoteExit(double px) {
+    if (!_speedNoteOpen || px <= 0) return;
+    speedNoteExiting.value = true;
+    speedNoteExit.value = (speedNoteExit.value + px).clamp(0.0, 4000.0);
+  }
+
+  void settleSpeedNoteExit(double velocityY) {
+    if (!speedNoteExiting.value) return;
+    final enough = speedNoteExit.value >= planPullThreshold || velocityY < -500;
+    speedNoteExiting.value = false;
+    if (enough) {
+      unawaited(closeSpeedNote());
+    } else {
+      speedNoteExit.value = 0;
+    }
+  }
+
+  Future<void> refreshSpeedNotes() async {
+    final svc = speedNoteService;
+    if (svc == null) return;
+    await svc.load();
+    // 选中的那条被别人删了 / 首次进来还没选：落到第一条。
+    final tab = svc.byId(_speedNoteTab);
+    if (tab == null) _speedNoteTab = svc.notes.isEmpty ? null : svc.notes.first.id;
+    notifyListeners();
+  }
+
+  /// 切标签（同一块面板里换一条速记，不涉及进出）。
+  void selectSpeedNote(String id) {
+    if (_speedNoteTab == id) return;
+    _speedNoteTab = id;
+    notifyListeners();
+  }
+
+  /// 新建一条并切过去。返回新那条（写盘失败时返回 null）。
+  Future<SpeedNote?> addSpeedNote() async {
+    final svc = speedNoteService;
+    if (svc == null) return null;
+    try {
+      final note = await svc.create();
+      _speedNoteTab = note.id;
+      notifyListeners();
+      return note;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 删一条。删的若是当前标签，落到左边那条（没有就往右挪）。
+  Future<void> removeSpeedNote(String id) async {
+    final svc = speedNoteService;
+    if (svc == null) return;
+    final at = svc.notes.indexWhere((n) => n.id == id);
+    await svc.delete(id);
+    if (_speedNoteTab == id) {
+      final rest = svc.notes;
+      _speedNoteTab = rest.isEmpty ? null : rest[(at <= 0 ? 0 : at - 1)].id;
+    }
+    notifyListeners();
+  }
+
+  /// 撤销删除：按原位置插回。
+  Future<void> restoreSpeedNote(SpeedNote note, {int? index}) async {
+    final svc = speedNoteService;
+    if (svc == null) return;
+    await svc.restore(note, index: index);
+    _speedNoteTab = note.id;
+    notifyListeners();
+  }
+
+  Future<void> renameSpeedNote(String id, String title) async {
+    final svc = speedNoteService;
+    if (svc == null) return;
+    await svc.rename(id, title);
+    notifyListeners();
+  }
+
+  /// 自动保存正文。
+  Future<void> saveSpeedNoteBody(String id, String body) async {
+    final svc = speedNoteService;
+    if (svc == null) return;
+    await svc.saveBody(id, body);
+    notifyListeners();
+  }
+
   /// 定位到设置页某条周期规则（决议 23：实例菜单的『编辑规则』）。
   String? get settingsFocusRoutineId => _settingsFocusRoutineId;
 
@@ -485,6 +685,7 @@ class AppController extends ChangeNotifier {
     this.mainlineService,
     this.planService,
     this.branchService,
+    this.speedNoteService,
     this.settingsPort,
     this.bootstrapPort,
     this.permissions,
@@ -616,6 +817,10 @@ class AppController extends ChangeNotifier {
     planDragging.dispose();
     planExit.dispose();
     planExiting.dispose();
+    speedNotePull.dispose();
+    speedNoteDragging.dispose();
+    speedNoteExit.dispose();
+    speedNoteExiting.dispose();
     mainlineExit.dispose();
     mainlineExiting.dispose();
     super.dispose();

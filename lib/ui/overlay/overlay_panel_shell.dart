@@ -151,8 +151,10 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
   }
 
   Future<void> _collapse() async {
-    // 覆盖页开着就先收它（§6.9 / §6.11）；编辑态由 mainlineCloseGuard 拦一道
+    // 覆盖页开着就先收它（§6.9 / §6.11 / §6.13）；编辑态由 mainlineCloseGuard
+    // 拦一道，速记的编辑态没有守卫——收起即自动保存（closeSpeedNote 会先落盘）。
     await widget.controller.closeMainline();
+    await widget.controller.closeSpeedNote();
     widget.controller.closePlan();
     if (!mounted) return;
     setState(() {
@@ -254,6 +256,7 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
   /// 滑回屏外后收起：与点遮罩收起同一条路（原生摘窗口 + 广播状态）。
   Future<void> _collapseFromDrag() async {
     widget.controller.closeMainline();
+    await widget.controller.closeSpeedNote();
     // 拖出去又拖回来的那一路：拖着的时候已经把编排立起来了，这里收回，
     // 免得下一次拉出来还挂着一块上次没看成的东西。
     widget.controller.closePlan();
@@ -302,7 +305,11 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        // 覆盖页开着：返回键只收它，面板留在原地（§6.9 / §6.11 两步收）
+        // 覆盖页开着：返回键只收它，面板留在原地（§6.9 / §6.11 / §6.13 两步收）
+        if (widget.controller.speedNoteOpen) {
+          unawaited(widget.controller.closeSpeedNote());
+          return;
+        }
         if (widget.controller.planOpen) {
           widget.controller.closePlan();
           return;

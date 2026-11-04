@@ -10,6 +10,7 @@ import 'application/plan_service.dart';
 import 'application/reminder_dispatcher.dart';
 import 'application/routine_service.dart';
 import 'application/shell_capabilities.dart';
+import 'application/speednote_service.dart';
 import 'application/task_service.dart';
 import 'domain/plan.dart';
 import 'domain/time_context.dart';
@@ -21,6 +22,7 @@ import 'repository/markdown_branch_repository.dart';
 import 'repository/markdown_routine_repository.dart';
 import 'repository/markdown_mainline_repository.dart';
 import 'repository/markdown_plan_repository.dart';
+import 'repository/markdown_speednote_repository.dart';
 import 'repository/markdown_task_repository.dart';
 import 'scheduler/scheduler_registry.dart';
 import 'scheduler/slack_priority_scheduler.dart';
@@ -105,6 +107,12 @@ Future<void> main() async {
   );
   await branchService.load();
 
+  // 速记（§6.13）：第六份数据（`速记.md`），一条速记一个标签页。与前面五份都不
+  // 相交——不产生任务、不进调度。读失败不阻塞启动（标签栏先空着，打开时再读）。
+  final speedNoteService =
+      SpeedNoteService(repo: MarkdownSpeedNoteRepository(taskDir));
+  await speedNoteService.load();
+
   // 交付层（§4.2/§4.3）：安卓走自建原生适配器；桌面用前台适配器
   // （Timer 闹钟 + 应用内弹窗回流）。
   final bridge = isAndroid ? AndroidNativeBridge() : null;
@@ -126,6 +134,7 @@ Future<void> main() async {
     mainlineService: mainlineService,
     planService: planService,
     branchService: branchService,
+    speedNoteService: speedNoteService,
     settingsPort: FileSettingsPort(taskDir),
     bootstrapPort: bootstrap,
     permissions: permissions,

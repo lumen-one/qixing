@@ -130,6 +130,55 @@ List<NotesBlock> parseNotesMarkdown(List<String> lines) {
   return blocks;
 }
 
+/// 正文里的一行标题。速记的折叠与目录条读它（[scanNotesHeadings]）。
+///
+/// 带 [line] 是因为折叠要按行号切正文：只认"第几行到第几行"才切得干净，
+/// 认得"第几个块"没用——块是解析结果，切不回原文。
+class NotesHeading {
+  /// 行号（0 起，对应传进 [scanNotesHeadings] 的那一份）。
+  final int line;
+
+  /// 1..6。
+  final int level;
+
+  /// `#` 后面那段文字（与 [parseNotesMarkdown] 同一个取法）。
+  final String text;
+
+  const NotesHeading({
+    required this.line,
+    required this.level,
+    required this.text,
+  });
+
+  @override
+  String toString() => 'NotesHeading($line, $level, $text)';
+}
+
+/// 扫出正文里的标题行。判据与 [parseNotesMarkdown] 完全同一个（`#` 后面要有空格，
+/// 收尾的 `#` 去掉），围栏代码块里的 `#` 不算。
+List<NotesHeading> scanNotesHeadings(List<String> lines) {
+  final out = <NotesHeading>[];
+  var i = 0;
+  while (i < lines.length) {
+    final fence = _fenceOf(lines[i]);
+    if (fence != null) {
+      i++;
+      while (i < lines.length && !_isFenceClose(lines[i], fence)) {
+        i++;
+      }
+      if (i < lines.length) i++;
+      continue;
+    }
+    final heading = _headingOf(lines[i]);
+    if (heading != null) {
+      out.add(NotesHeading(
+          line: i, level: heading.$1, text: heading.$2));
+    }
+    i++;
+  }
+  return out;
+}
+
 /// 把一行文字切成带样式的段。
 List<NotesSpan> parseNotesInline(String text) => _inline(text, 0);
 
