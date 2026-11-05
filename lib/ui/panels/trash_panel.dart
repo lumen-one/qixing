@@ -46,7 +46,7 @@ class TrashOverlay extends StatelessWidget {
                   child: NotificationListener<ScrollNotification>(
                     onNotification: _onScroll,
                     child: entries.isEmpty
-                        ? _empty(theme, context)
+                        ? _empty(theme)
                         : _list(context, entries),
                   ),
                 ),
@@ -92,7 +92,7 @@ class TrashOverlay extends StatelessWidget {
 
   // ---- 清单 ----
 
-  Widget _empty(ThemeData theme, BuildContext context) => ListView(
+  Widget _empty(ThemeData theme) => ListView(
         // 空态也要可滚：滚到底再上滑是这一页唯一的收起手势，空着也得能退。
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
