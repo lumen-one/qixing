@@ -380,6 +380,7 @@ class _DayTimelineState extends State<_DayTimeline> {
   @override
   void initState() {
     super.initState();
+    widget.controller.addPageTeardown(_releaseDraftFocus);
     // 打开就把镜头落到『现在』：编排一长就得滚，落在顶部等于先给人看一段早就
     // 过完的安排。得等第一帧排完版才量得到游标的位置，所以推到帧后。
     if (!widget.readOnly) {
@@ -389,9 +390,16 @@ class _DayTimelineState extends State<_DayTimeline> {
 
   @override
   void dispose() {
+    widget.controller.removePageTeardown(_releaseDraftFocus);
     _draft.dispose();
     _draftFocus.dispose();
     super.dispose();
+  }
+
+  /// 面板收起之前只放焦点、不收添加行：写到一半的条目留着，拉回来接着打。
+  /// 放焦点是为了不让输入法连接跟着面板活到下一个页面上去。
+  Future<void> _releaseDraftFocus() async {
+    if (_draftFocus.hasFocus) _draftFocus.unfocus();
   }
 
   /// 把时间轴滚到『现在』：游标停在视口上方三分之一处，前面留一小截已过的、

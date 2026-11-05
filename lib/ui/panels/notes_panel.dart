@@ -21,6 +21,11 @@ class NotesPanel extends StatefulWidget {
 
 class _NotesPanelState extends State<NotesPanel> {
   final _textCtrl = TextEditingController();
+
+  /// 编辑框的焦点。收起面板时要主动放掉它——否则输入法连接还开着，键盘会跟到
+  /// 别的页上（与速记页同一套，见 [AppController.addPageTeardown]）。
+  final _editorFocus = FocusNode();
+
   bool _editing = false;
   bool _saving = false;
 
@@ -31,6 +36,7 @@ class _NotesPanelState extends State<NotesPanel> {
   void initState() {
     super.initState();
     widget.controller.addListener(_onChange);
+    widget.controller.addPageTeardown(_releaseFocus);
     // 读到**帧后**再读笔记：本页是第一页，面板展开时就是在这里首次挂载，
     // 直接在 initState 里读会同步 notifyListeners → 祖先宿主 setState，
     // 框架报 "setState() called during build"（v1.24 页序一换就撞上了）。
@@ -41,9 +47,17 @@ class _NotesPanelState extends State<NotesPanel> {
 
   @override
   void dispose() {
+    widget.controller.removePageTeardown(_releaseFocus);
     _textCtrl.dispose();
+    _editorFocus.dispose();
     widget.controller.removeListener(_onChange);
     super.dispose();
+  }
+
+  /// 面板收起之前只放焦点，**不退编辑态**：这一页是手工保存，收起面板不该被当成
+  /// 取消，草稿与编辑态都留着，拉回来接着写。
+  Future<void> _releaseFocus() async {
+    if (_editorFocus.hasFocus) _editorFocus.unfocus();
   }
 
   void _onChange() {
@@ -64,6 +78,8 @@ class _NotesPanelState extends State<NotesPanel> {
   }
 
   void _cancelEdit() {
+    // 先把焦点放掉：输入框马上要被换掉，别等卸载才关输入法连接。
+    if (_editorFocus.hasFocus) _editorFocus.unfocus();
     setState(() => _editing = false);
   }
 
@@ -71,6 +87,7 @@ class _NotesPanelState extends State<NotesPanel> {
     setState(() => _saving = true);
     final ok = await widget.controller.saveNotes(_draft.merge(_textCtrl.text));
     if (!mounted) return;
+    if (ok && _editorFocus.hasFocus) _editorFocus.unfocus();
     setState(() {
       _saving = false;
       if (ok) _editing = false;
@@ -198,6 +215,7 @@ class _NotesPanelState extends State<NotesPanel> {
         padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
         child: TextField(
           controller: _textCtrl,
+          focusNode: _editorFocus,
           expands: true,
           maxLines: null,
           minLines: null,

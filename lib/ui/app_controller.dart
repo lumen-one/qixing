@@ -482,8 +482,30 @@ class AppController extends ChangeNotifier {
     return svc.byId(_speedNoteTab) ?? svc.notes.first;
   }
 
-  /// 覆盖页注入的"退出前把编辑态落盘"（自动保存的唯一时机在页面那一侧）。
-  Future<void> Function()? speedNoteFlush;
+  /// 各页的"收拾动作"：落盘、退编辑态、放下焦点。
+  ///
+  /// 面板收起 / 覆盖页关闭之前统一跑一遍。**键盘只认输入法连接被关掉**，而那件事
+  /// 发生在输入框装卸时：覆盖页退场要 200ms，悬浮面板收起来更是先摘窗口、后跑动画，
+  /// 等"页面被卸载"来收键盘就等不到。页面在 `initState` 注册、`dispose` 注销。
+  final List<Future<void> Function()> _pageTeardowns = [];
+
+  void addPageTeardown(Future<void> Function() teardown) =>
+      _pageTeardowns.add(teardown);
+
+  void removePageTeardown(Future<void> Function() teardown) =>
+      _pageTeardowns.remove(teardown);
+
+  /// 挨个跑一遍收拾动作。某一页出错不拦住别的页，也不拦住关页本身
+  /// （速记写盘失败时字还在输入框里，下次进来仍在）。
+  Future<void> tearDownPages() async {
+    for (final teardown in List<Future<void> Function()>.of(_pageTeardowns)) {
+      try {
+        await teardown();
+      } catch (_) {
+        // 单页收拾失败不影响别的页与关页。
+      }
+    }
+  }
 
   /// 灵感页在顶部继续下拉时喂进来的行程（只加正的）。
   void pullSpeedNote(double px) {
@@ -522,22 +544,16 @@ class AppController extends ChangeNotifier {
 
   /// 关掉覆盖页。宿主的返回键 / 收起面板 / 覆盖页自己的『返回』都走这里。
   ///
-  /// **先落盘再关**：编辑态里那点没点『完成』的字，切走不该丢（自动保存）。
+  /// 它同时是"面板要收起"的统一出口（悬浮壳与抽屉都调它），所以**不管覆盖页开没开**，
+  /// 都先跑一遍各页的收拾动作——收起面板时灵感页可能正在编辑，那点字与焦点归它自己管。
   Future<void> closeSpeedNote() async {
+    await tearDownPages();
     if (!_speedNoteOpen) {
       speedNotePull.value = 0;
       speedNoteDragging.value = false;
       speedNoteExit.value = 0;
       speedNoteExiting.value = false;
       return;
-    }
-    final flush = speedNoteFlush;
-    if (flush != null) {
-      try {
-        await flush();
-      } catch (_) {
-        // 写盘失败不拦住退出：字还在输入框里，下次进来仍在。
-      }
     }
     _speedNoteOpen = false;
     speedNotePull.value = 0;

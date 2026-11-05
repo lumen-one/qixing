@@ -113,6 +113,26 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
   });
 
+  testWidgets('面板收起时放掉添加行的焦点，添加行本身留着', (tester) async {
+    final c = makeController();
+    await pumpOverlay(tester, c);
+
+    await tester.tap(find.text('添加一项'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '写一半');
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.hasAnyClients, isTrue);
+
+    // 面板收起的统一出口（悬浮壳与抽屉都调它）。
+    await c.tearDownPages();
+    await tester.pump();
+
+    // 输入法连接关了：键盘不会跟着面板活到下一个页面上。
+    expect(tester.testTextInput.hasAnyClients, isFalse);
+    // 写到一半的条目留着，不因为收起面板就被收掉。
+    expect(find.byType(TextField), findsOneWidget);
+  });
+
   testWidgets('快捷添加：候选来自今日清单与任务池，点一条直接落账', (tester) async {
     final c = makeController();
     await c.createTask(title: '写方案');

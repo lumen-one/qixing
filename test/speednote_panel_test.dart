@@ -133,4 +133,25 @@ void main() {
     // 撤销入口在 toast 里
     expect(find.text('撤销'), findsOneWidget);
   });
+
+  testWidgets('关页时自己落盘并放焦点，不等页面被卸载', (tester) async {
+    final c = makeController(twoNotes());
+    await pumpOverlay(tester, c);
+
+    await tester.tap(find.byTooltip('编辑'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '# 改过的');
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.hasAnyClients, isTrue);
+
+    // 这一页在真实装配里是覆盖页的子节点，200ms 退场动画跑完才卸载；悬浮壳更早
+    // 摘窗口。这里不 settle，就是要看"关页这一刻"页面自己做到了什么。
+    await c.closeSpeedNote();
+    await tester.pump();
+
+    expect(c.speedNoteOpen, isFalse);
+    expect(c.currentSpeedNote!.body, '# 改过的');
+    // 输入法连接已关：键盘不会留到别的页上去。
+    expect(tester.testTextInput.hasAnyClients, isFalse);
+  });
 }

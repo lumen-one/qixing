@@ -14,9 +14,9 @@ import '../widgets/notes_blocks.dart';
 /// 整篇一个输入框、`#` 行边打边放大。数据在 `速记.md`（[SpeedNote]），这一层只管
 /// 长什么样、什么时候落盘。
 ///
-/// **自动保存**：切标签、点『完成』、退出覆盖页、面板收起时写盘。页面把
-/// [AppController.speedNoteFlush] 挂上，控制器关页之前会先调它一次——写盘时机只有
-/// 这一处，别在别处再存一遍。
+/// **自动保存**：切标签、点『完成』、退出覆盖页、面板收起时写盘。页面把自己的
+/// "收拾动作"（落盘 + 放焦点）注册进控制器，关页之前控制器会等它跑完——写盘时机
+/// 只有这一处，别在别处再存一遍。
 class SpeedNoteOverlay extends StatefulWidget {
   final AppController controller;
 
@@ -64,12 +64,15 @@ class _SpeedNoteOverlayState extends State<SpeedNoteOverlay> {
   @override
   void initState() {
     super.initState();
-    _c.speedNoteFlush = _flush;
+    _c.addPageTeardown(_releaseEditing);
   }
 
   @override
   void dispose() {
-    if (identical(_c.speedNoteFlush, _flush)) _c.speedNoteFlush = null;
+    _c.removePageTeardown(_releaseEditing);
+    // 兜一道：有路绕过控制器把页面拆掉时，焦点别跟着节点一起消失（输入法连接
+    // 那时才关，键盘会留在别的页上）。
+    if (_editorFocus.hasFocus) _editorFocus.unfocus();
     _flashTimer?.cancel();
     _bodyCtrl.dispose();
     _editorFocus.dispose();
@@ -86,6 +89,18 @@ class _SpeedNoteOverlayState extends State<SpeedNoteOverlay> {
     final text = _bodyCtrl.text;
     if (text == note.body) return;
     await _c.saveSpeedNoteBody(note.id, text);
+  }
+
+  /// 收拾：落盘，然后**放掉焦点**。
+  ///
+  /// 键盘只认"输入法连接被关掉"，而那件事发生在输入框装卸时。退场动画要 200ms、
+  /// 悬浮壳摘窗口更早，等卸载来收键盘就来不及了——所以在这一步主动 `unfocus`。
+  /// **编辑态不退**：页面紧接着就滑走了，中途把正文换成展示态会看见字重排一下；
+  /// 『完成』那边退编辑态是它自己的事。
+  Future<void> _releaseEditing() async {
+    await _flush();
+    if (!mounted) return;
+    if (_editorFocus.hasFocus) _editorFocus.unfocus();
   }
 
   // ------------------------------------------------------------ 标签
@@ -167,7 +182,7 @@ class _SpeedNoteOverlayState extends State<SpeedNoteOverlay> {
   }
 
   Future<void> _finishEdit() async {
-    await _flush();
+    await _releaseEditing();
     if (!mounted) return;
     setState(() => _editing = false);
   }
