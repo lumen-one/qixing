@@ -438,6 +438,7 @@ status: active
     final trashRaw = trashFile.readAsStringSync();
     expect(trashRaw, contains('deleted_line: - [ ] 完成 Agent 调度论文阅读'));
     expect(trashRaw, contains('deleted_line_no:'));
+    expect(trashRaw, contains('deleted_at:'), reason: '回收站页要按删除时刻排');
     final human = doc().readAsStringSync();
     expect(human, isNot(contains('gtd:deleted')));
     expect(human, isNot(contains('完成 Agent 调度论文阅读')));
@@ -447,9 +448,9 @@ status: active
     expect(human.trimRight(), '# 工作');
 
     final trash = await repo.loadTrash();
-    expect(trash.map((t) => t.title), ['完成 Agent 调度论文阅读']);
-    expect(trash.single.description, '阅读论文并整理笔记。');
-    expect(trash.single.tags, ['工作']);
+    expect(trash.map((e) => e.task.title), ['完成 Agent 调度论文阅读']);
+    expect(trash.single.task.description, '阅读论文并整理笔记。');
+    expect(trash.single.task.tags, ['工作']);
 
     await repo.restore('task-001');
     expect(kernel('task-001').existsSync(), isTrue);
@@ -462,8 +463,42 @@ status: active
     expect(restored.estimatedWork, 120);
   });
 
-  test('删除与恢复：行拿掉后不留空行，恢复插回原位', () async {
-    doc().writeAsStringSync('# 工作\n'
+  test('回收站：清单按删除时刻倒序，单条彻底删除只删那一条', () async {
+    await repo.save(makeTask());
+    await repo.save(Task(
+      id: 'task-002',
+      title: '第二件',
+      deadline: DateTime(2026, 10, 9, 18, 0),
+      created: DateTime(2026, 10, 7, 15, 40),
+    ));
+    await repo.loadAll();
+    await repo.moveToTrash('task-001');
+    // 两条的删除时刻要拉开（写入发生在同一毫秒也不会乱序：sorted 稳定，
+    // 但断言依赖先后，给一点间隔更接近真实）。
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await repo.moveToTrash('task-002');
+
+    final trash = await repo.loadTrash();
+    expect(trash.map((e) => e.task.id), ['task-002', 'task-001'],
+        reason: '最近删的在最上面');
+    expect(
+      trash.first.deletedAt.isAfter(trash.last.deletedAt) ||
+          trash.first.deletedAt.isAtSameMomentAs(trash.last.deletedAt),
+      isTrue,
+    );
+
+    final first = File('${tmp.path}/.gtd/.trash/task-001.md');
+    final second = File('${tmp.path}/.gtd/.trash/task-002.md');
+    await repo.purgeFromTrash('task-001');
+    expect(first.existsSync(), isFalse);
+    expect(second.existsSync(), isTrue, reason: '只删点中的那一条');
+
+    await repo.restore('task-002');
+    expect(kernel('task-002').readAsStringSync(), isNot(contains('deleted_at')),
+        reason: '文件搬回 .gtd/ 时回收站专用键要摘干净');
+  });
+
+  test('删除与恢复：行拿掉后不留空行，恢复插回原位', () async {    doc().writeAsStringSync('# 工作\n'
         '\n'
         '- [ ] 甲 %%创建 2026-10-11,07:00%% ##工作\n'
         '- [ ] 乙 %%创建 2026-10-11,07:05%% ##工作\n'

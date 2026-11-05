@@ -14,6 +14,9 @@ import '../widgets/task_tile.dart';
 /// 无编号、不可拖（历史没有顺序意图）；点条目 = 与今日清单/任务池同一张只读
 /// 详情卡，动作（恢复未完成 / 删除）在长按菜单。空态："还没有完成的事"。
 ///
+/// **下拉进回收站**（[panels/trash.md](../../../docs/panels/trash.md)）：与今日页
+/// 翻编排、灵感页翻速记同一条手势——滚到顶之后继续往下拉，才翻出回收站覆盖页。
+///
 /// 分组查询在 application 层（`buildCompletedView`），这里只消费结果——UI 不含
 /// 逻辑，与今日页/任务池同规则。与调度模式三档无关：存档不参与排序。
 class CompletedPanel extends StatelessWidget {
@@ -36,23 +39,11 @@ class CompletedPanel extends StatelessWidget {
     final view = controller.completedView;
     final theme = Theme.of(context);
 
-    if (view.isEmpty) {
-      return Center(
-        child: FadeIn(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.task_alt_outlined,
-                  size: 44, color: theme.colorScheme.onSurfaceVariant),
-              const SizedBox(height: 8),
-              const Text('还没有完成的事'),
-            ],
-          ),
-        ),
-      );
-    }
+    if (view.isEmpty) return _withTrashPull(_empty(theme));
 
-    return ListView(
+    return _withTrashPull(ListView(
+      // 内容不满一屏时也要能下拉：这一页的全部意义就是"往下拉能进回收站"。
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(0, 6, 0, 96),
       children: [
         if (view.today.isNotEmpty) ...[
@@ -68,8 +59,59 @@ class CompletedPanel extends StatelessWidget {
           for (final t in view.earlier) _tile(context, t),
         ],
       ],
+    ));
+  }
+
+  /// 这一页是回收站的入口（§6.14）：**已经滚到顶**还继续往下拉，就把行程喂给
+  /// 控制器。与今日页进编排同一套判据——只认手指拖（`dragDetails != null`），
+  /// 鼠标滚轮"滚到头继续滚"是常态，认了就是天天误触；选择模式下不接。
+  Widget _withTrashPull(Widget child) {
+    if (selection.selecting) return child;
+    return NotificationListener<ScrollNotification>(
+      onNotification: (n) {
+        if (n.metrics.axis != Axis.vertical) return false;
+        if (n is OverscrollNotification &&
+            n.dragDetails != null &&
+            n.overscroll < 0) {
+          // 顶部继续下拉时 overscroll 是负的（像素已经不能再减）。
+          controller.pullTrash(-n.overscroll);
+        } else if (n is ScrollEndNotification) {
+          controller
+              .settleTrash(n.dragDetails?.velocity.pixelsPerSecond.dy ?? 0);
+        }
+        return false;
+      },
+      child: child,
     );
   }
+
+  /// 空态也要能滚（同灵感页）：一份居中的 Column 没有可滚的东西，就不会有
+  /// overscroll——已完成页空着的时候恰好最需要去回收站捞一件回来。
+  Widget _empty(ThemeData theme) => LayoutBuilder(
+        builder: (ctx, constraints) => SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: FadeIn(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.task_alt_outlined,
+                        size: 44, color: theme.colorScheme.onSurfaceVariant),
+                    const SizedBox(height: 8),
+                    const Text('还没有完成的事'),
+                    const SizedBox(height: 4),
+                    Text('删掉的任务去回收站找：往下拉',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
 
   Widget _tile(BuildContext context, Task task) => TaskTile(
         controller: controller,

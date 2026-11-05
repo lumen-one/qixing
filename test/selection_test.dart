@@ -236,7 +236,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(controller.tasks.length, 0);
       await controller.refreshTrash();
-      expect(controller.trashTasks.length, 2);
+      expect(controller.trashEntries.length, 2);
 
       expect(find.text('已删除 2 件'), findsOneWidget);
       await tester.tap(find.text('撤销'));

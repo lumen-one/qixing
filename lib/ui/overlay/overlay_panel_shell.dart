@@ -305,9 +305,13 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        // 覆盖页开着：返回键只收它，面板留在原地（§6.9 / §6.11 / §6.13 两步收）
+        // 覆盖页开着：返回键只收它，面板留在原地（§6.9 / §6.11 / §6.13 / §6.14 两步收）
         if (widget.controller.speedNoteOpen) {
           unawaited(widget.controller.closeSpeedNote());
+          return;
+        }
+        if (widget.controller.trashOpen) {
+          widget.controller.closeTrash();
           return;
         }
         if (widget.controller.planOpen) {

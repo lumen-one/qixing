@@ -1,4 +1,5 @@
 import '../domain/task.dart';
+import '../domain/trash.dart';
 
 /// 文件变更事件类型。【待细化】后续按需细分 created/updated/deleted。
 enum RepoChangeType { changed }
@@ -28,13 +29,16 @@ abstract class TaskRepository {
   /// 人类文档里那一行用 `%%…%%` 注释掉（内容原样保留，Obsidian 可见可捞）。
   Future<void> moveToTrash(String id);
 
-  /// 回收站里的任务（忽略 .trash 之外的任何东西）。
-  Future<List<Task>> loadTrash();
+  /// 回收站里的任务，**按删除时刻倒序**（最近删的在最前）。
+  Future<List<TrashEntry>> loadTrash();
 
   /// 从回收站恢复。
   Future<void> restore(String id);
 
-  /// 清空回收站（真删，仅设置页显式触发）。
+  /// 彻底删除回收站里的某一条（单条真删，回收站页显式触发）。
+  Future<void> purgeFromTrash(String id);
+
+  /// 清空回收站（真删，回收站页显式触发）。
   Future<void> purgeTrash();
 
   /// 整理内核属性目录：删掉与人类文档里任何一行都对不上的副本，返回删掉的个数。

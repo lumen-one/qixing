@@ -111,7 +111,7 @@ void main() {
       expect(svc.byId(t.id), isNull);
 
       final trash = await svc.loadTrash();
-      expect(trash.single.id, t.id);
+      expect(trash.single.task.id, t.id);
 
       await svc.restoreTask(t.id);
       expect(svc.byId(t.id), isNotNull);

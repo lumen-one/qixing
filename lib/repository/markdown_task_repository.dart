@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 
 import '../domain/task.dart';
+import '../domain/trash.dart';
 import 'markdown_task_codec.dart';
 import 'task_codec.dart';
 import 'task_codec_registry.dart';
@@ -354,11 +355,12 @@ class MarkdownTaskRepository implements TaskRepository {
 
   // ---- 软删除三件套（D11）：内核文件进 .gtd/.trash/，人类文档那一行整行拿掉 ----
 
-  /// 回收站文件里的两个专用键（[docs/formats/sidecar.md]）：原行 + 原行号。
-  /// 直接手写手读，不进 `Task.metadata`、不在登记表里——它们描述的是
-  /// "这个文件躺在回收站里"，不是任务事实。
+  /// 回收站文件里的三个专用键（[docs/formats/sidecar.md]）：原行 + 原行号 +
+  /// 删除时刻。直接手写手读，不进 `Task.metadata`、不在登记表里——它们描述的
+  /// 是"这个文件躺在回收站里"，不是任务事实。
   static const String _deletedLineKey = 'deleted_line';
   static const String _deletedLineNoKey = 'deleted_line_no';
+  static const String _deletedAtKey = 'deleted_at';
 
   @override
   Future<void> moveToTrash(String id) async {
@@ -374,7 +376,8 @@ class MarkdownTaskRepository implements TaskRepository {
     final line = index == null ? null : document.lines[index].replaceAll('\r', '');
 
     final raw = await f.readAsString();
-    await File(_trashPathOf(id)).writeAsString(_withTrashKeys(raw, line, index));
+    await File(_trashPathOf(id))
+        .writeAsString(_withTrashKeys(raw, line, index, DateTime.now()));
     await f.delete();
 
     _lastSeenSidecar.remove(id);
@@ -389,25 +392,31 @@ class MarkdownTaskRepository implements TaskRepository {
   }
 
   @override
-  Future<List<Task>> loadTrash() async {
-    final tasks = <Task>[];
-    if (!_trashDir.existsSync()) return tasks;
+  Future<List<TrashEntry>> loadTrash() async {
+    final entries = <TrashEntry>[];
+    if (!_trashDir.existsSync()) return entries;
 
     // 名字与备注从回收站文件自己身上读（`deleted_line`）；老版本的回收站文件
-    // 没有这个键，退回"去人类文档里找注释行"。
+    // 没有这个键，退回"去人类文档里找注释行"。删除时刻同理：老文件没有
+    // `deleted_at`，拿文件修改时间兜底——写这个文件的那一刻就是删除时刻。
     final legacy = <Task>[];
     for (final entity in _trashDir.listSync()) {
       if (entity is! File || !entity.path.endsWith('.md')) continue;
       final sidecar = await _readSidecarFrom(entity.path);
       if (sidecar == null) continue;
       final raw = await entity.readAsString();
+      final deletedAt =
+          DateTime.tryParse(_trashValue(raw, _deletedAtKey) ?? '') ??
+              entity.statSync().modified;
       final line = _parseOneLine(_trashValue(raw, _deletedLineKey));
       if (line == null) {
-        tasks.add(sidecar);
+        entries.add(TrashEntry(task: sidecar, deletedAt: deletedAt));
         legacy.add(sidecar);
         continue;
       }
-      tasks.add(_merge(line: line, id: sidecar.id, sidecar: sidecar));
+      entries.add(TrashEntry(
+          task: _merge(line: line, id: sidecar.id, sidecar: sidecar),
+          deletedAt: deletedAt));
     }
 
     if (legacy.isNotEmpty) {
@@ -425,15 +434,19 @@ class MarkdownTaskRepository implements TaskRepository {
       final lines = documentCodec.parse(bodies.join('\n')).tasks;
       if (lines.length == legacy.length) {
         for (var i = 0; i < legacy.length; i++) {
-          final at = tasks.indexWhere((t) => t.id == legacy[i].id);
+          final at = entries.indexWhere((e) => e.task.id == legacy[i].id);
           if (at < 0) continue;
-          tasks[at] = _merge(line: lines[i], id: legacy[i].id, sidecar: legacy[i]);
+          entries[at] = TrashEntry(
+              task: _merge(
+                  line: lines[i], id: legacy[i].id, sidecar: legacy[i]),
+              deletedAt: entries[at].deletedAt);
         }
       }
     }
 
-    tasks.sort((a, b) => a.created.compareTo(b.created));
-    return tasks;
+    // 最近删的在最上面：回收站页从上往下就是"刚删的 → 早删的"。
+    entries.sort((a, b) => b.deletedAt.compareTo(a.deletedAt));
+    return entries;
   }
 
   @override
@@ -474,6 +487,12 @@ class MarkdownTaskRepository implements TaskRepository {
     final lines = List<String>.from(document.lines)
       ..insert(lineNo.clamp(0, document.lines.length), line);
     await _docFile.writeAsString(document.join(lines));
+  }
+
+  @override
+  Future<void> purgeFromTrash(String id) async {
+    final f = File(_trashPathOf(id));
+    if (f.existsSync()) await f.delete();
   }
 
   @override
@@ -521,10 +540,12 @@ class MarkdownTaskRepository implements TaskRepository {
     return removed;
   }
 
-  /// 往回收站文件的 frontmatter 末尾插那两个键。没有 frontmatter 就原样返回
+  /// 往回收站文件的 frontmatter 末尾插那几个键。没有 frontmatter 就原样返回
   /// （认不出结构时不硬塞，恢复时退化为按标签追加）。
-  static String _withTrashKeys(String raw, String? line, int? index) {
+  static String _withTrashKeys(
+      String raw, String? line, int? index, DateTime deletedAt) {
     final insert = <String>[
+      '$_deletedAtKey: ${deletedAt.toIso8601String()}',
       if (line != null) '$_deletedLineKey: $line',
       if (index != null) '$_deletedLineNoKey: $index',
     ];
@@ -544,11 +565,12 @@ class MarkdownTaskRepository implements TaskRepository {
     return lines.join('\n');
   }
 
-  /// 把 [_withTrashKeys] 插的两行摘掉（文件搬回 `.gtd/` 时用）。
+  /// 把 [_withTrashKeys] 插的那几行摘掉（文件搬回 `.gtd/` 时用）。
   static String _stripTrashKeys(String raw) {
     final kept = raw.split('\n').where((l) {
       final t = l.trim();
-      return !t.startsWith('$_deletedLineKey:') &&
+      return !t.startsWith('$_deletedAtKey:') &&
+          !t.startsWith('$_deletedLineKey:') &&
           !t.startsWith('$_deletedLineNoKey:');
     });
     return kept.join('\n');

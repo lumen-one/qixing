@@ -56,10 +56,19 @@ extension TaskServiceTrash on TaskService {
     _emit(DomainEventType.taskRestored, id, origin);
   }
 
-  /// 清空回收站（真删，仅设置页显式触发）。
+  /// 清空回收站（真删，回收站页显式触发）。
   Future<void> purgeTrash({EventOrigin origin = EventOrigin.user}) async {
     await repo.purgeTrash();
     _emit(DomainEventType.trashPurged, '', origin);
+  }
+
+  /// 彻底删除回收站里的某一条（真删，回收站页的行尾菜单触发）。
+  ///
+  /// 与 [purgeTrash] 同一个事件：订阅者要的都是"回收清单变了，重读一遍"，
+  /// taskId 报被删的那一条。
+  Future<void> purgeTask(String id, {EventOrigin origin = EventOrigin.user}) async {
+    await repo.purgeFromTrash(id);
+    _emit(DomainEventType.trashPurged, id, origin);
   }
 
   /// 整理内核属性目录：删掉没人认领的副本（设置页显式触发）。
@@ -71,6 +80,6 @@ extension TaskServiceTrash on TaskService {
     return removed;
   }
 
-  /// 回收站清单（查询，不经缓存）。
-  Future<List<Task>> loadTrash() => repo.loadTrash();
+  /// 回收站清单（查询，不经缓存）。按删除时刻倒序，见 [TaskRepository.loadTrash]。
+  Future<List<TrashEntry>> loadTrash() => repo.loadTrash();
 }

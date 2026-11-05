@@ -26,6 +26,7 @@ import '../domain/schedule.dart';
 import '../domain/speednote.dart';
 import '../domain/task.dart';
 import '../domain/time_context.dart';
+import '../domain/trash.dart';
 import 'panel_pages.dart';
 import 'theme.dart';
 
@@ -126,7 +127,7 @@ class AppController extends ChangeNotifier {
 
   AppSettings _settings = AppSettings.defaults;
   bool _settingsLoaded = false;
-  List<Task> _trash = const [];
+  List<TrashEntry> _trash = const [];
   NotesReadResult? _notes;
   bool _notesLoading = false;
   String? _lastGenerationMark;
@@ -190,7 +191,8 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<Task> get trashTasks => _trash;
+  /// 回收站清单（按删除时刻倒序，回收站页消费）。
+  List<TrashEntry> get trashEntries => _trash;
 
   NotesReadResult? get notes => _notes;
 
@@ -649,6 +651,99 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---- 回收站（§6.14）----
+
+  /// 回收站覆盖页开着吗。与 [planOpen] 同一套理由：状态在控制器，宿主的返回键
+  /// 与覆盖页自己都问这一句。
+  bool _trashOpen = false;
+
+  bool get trashOpen => _trashOpen;
+
+  /// 这次打开要不要跳过进场动画（下拉进来的那一路是 true）。
+  bool _trashEnterInstant = true;
+
+  bool get trashEnterInstant => _trashEnterInstant;
+
+  /// 下拉跟手的行程（逻辑像素，0 = 完全藏起来）。
+  final ValueNotifier<double> trashPull = ValueNotifier<double>(0);
+
+  /// 手指还按着（false = 松手，覆盖页该补满或弹回）。
+  final ValueNotifier<bool> trashDragging = ValueNotifier<bool>(false);
+
+  /// 上滑退出的跟手行程。
+  final ValueNotifier<double> trashExit = ValueNotifier<double>(0);
+
+  /// 手指还按着（false = 该补满或弹回）。
+  final ValueNotifier<bool> trashExiting = ValueNotifier<bool>(false);
+
+  /// 已完成页在顶部继续下拉时喂进来的行程（只加正的）。
+  void pullTrash(double px) {
+    if (_trashOpen || px <= 0) return;
+    trashDragging.value = true;
+    trashPull.value = (trashPull.value + px).clamp(0.0, 4000.0);
+  }
+
+  /// 松手：拉过阈值或向下快甩（dy > 500 px/s）就补满，否则弹回。
+  void settleTrash(double velocityY) {
+    if (!trashDragging.value && trashPull.value == 0) return;
+    final enough = trashPull.value >= planPullThreshold || velocityY > 500;
+    trashDragging.value = false;
+    if (enough) {
+      openTrash();
+    } else {
+      trashPull.value = 0;
+    }
+  }
+
+  void openTrash({bool instant = true}) {
+    trashPull.value = 0;
+    trashDragging.value = false;
+    if (_trashOpen) {
+      unawaited(refreshTrash());
+      return;
+    }
+    _trashEnterInstant = instant;
+    _trashOpen = true;
+    notifyListeners();
+    // 打开这一刻读一遍盘：另一个引擎（悬浮窗）可能刚删过东西。
+    unawaited(refreshTrash());
+  }
+
+  /// 关掉覆盖页。宿主的返回键与页头『返回』走这里。
+  void closeTrash() {
+    if (!_trashOpen) {
+      trashPull.value = 0;
+      trashDragging.value = false;
+      trashExit.value = 0;
+      trashExiting.value = false;
+      return;
+    }
+    _trashOpen = false;
+    trashPull.value = 0;
+    trashDragging.value = false;
+    trashExit.value = 0;
+    trashExiting.value = false;
+    notifyListeners();
+  }
+
+  /// 清单滚到底后继续上滑（逻辑像素，只加正的）。
+  void pullTrashExit(double px) {
+    if (!_trashOpen || px <= 0) return;
+    trashExiting.value = true;
+    trashExit.value = (trashExit.value + px).clamp(0.0, 4000.0);
+  }
+
+  void settleTrashExit(double velocityY) {
+    if (!trashExiting.value) return;
+    final enough = trashExit.value >= planPullThreshold || velocityY < -500;
+    trashExiting.value = false;
+    if (enough) {
+      closeTrash();
+    } else {
+      trashExit.value = 0;
+    }
+  }
+
   /// 定位到设置页某条周期规则（决议 23：实例菜单的『编辑规则』）。
   String? get settingsFocusRoutineId => _settingsFocusRoutineId;
 
@@ -837,6 +932,10 @@ class AppController extends ChangeNotifier {
     speedNoteDragging.dispose();
     speedNoteExit.dispose();
     speedNoteExiting.dispose();
+    trashPull.dispose();
+    trashDragging.dispose();
+    trashExit.dispose();
+    trashExiting.dispose();
     mainlineExit.dispose();
     mainlineExiting.dispose();
     super.dispose();
@@ -1475,6 +1574,12 @@ class AppController extends ChangeNotifier {
 
   Future<void> purgeTrash() async {
     await service.purgeTrash();
+    await refreshTrash();
+  }
+
+  /// 彻底删除回收站里的某一条（真删，不可恢复）。
+  Future<void> purgeTask(String id) async {
+    await service.purgeTask(id);
     await refreshTrash();
   }
 

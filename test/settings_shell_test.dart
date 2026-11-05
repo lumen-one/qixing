@@ -85,7 +85,6 @@ void main() {
       '周期任务',
       '定期挑',
       '主题',
-      '回收站',
     ]) {
       expect(find.text(label), findsWidgets, reason: '「$label」两种壳都要有');
     }

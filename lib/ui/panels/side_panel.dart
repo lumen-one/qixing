@@ -18,6 +18,7 @@ import 'plan_panel.dart';
 import 'pool_panel.dart';
 import 'speednote_panel.dart';
 import 'today_panel.dart';
+import 'trash_panel.dart';
 
 /// 侧边栏面板本体（§5.1：panels 平台无关，只被 shell 摆放）。
 ///
@@ -279,6 +280,24 @@ class _SidePanelState extends State<SidePanel> {
               ),
             ),
           ),
+          // 回收站覆盖页（§6.14）：已完成页滚到顶再下拉。与编排 / 速记同一套进出。
+          Positioned.fill(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: PullOverlayReveal(
+                open: controller.trashOpen,
+                instantEnter: controller.trashEnterInstant,
+                pull: controller.trashPull,
+                dragging: controller.trashDragging,
+                exit: controller.trashExit,
+                exiting: controller.trashExiting,
+                child: TrashOverlay(
+                  controller: controller,
+                  onClose: controller.closeTrash,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -330,6 +349,7 @@ class _SidePanelState extends State<SidePanel> {
   ///
   /// 今日页与灵感页单独放开鼠标拖拽（§6.11 / §6.13）：桌面没有触屏，编排与速记的
   /// 入口得靠"按住鼠标拖到顶再往下拖"复现同一条手势；只包这两页，别的列表不受影响。
+  /// 已完成页同理（§6.14 进回收站）——桌面上一页都进不去就太怪了。
   Widget _pageBody(PanelPage page, AppController controller) => switch (page) {
         PanelPage.notes => ScrollConfiguration(
             behavior: ScrollConfiguration.of(context).copyWith(
@@ -345,8 +365,12 @@ class _SidePanelState extends State<SidePanel> {
           ),
         PanelPage.pool =>
           PoolPanel(controller: controller, selection: _selection),
-        PanelPage.completed =>
-          CompletedPanel(controller: controller, selection: _selection),
+        PanelPage.completed => ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: PointerDeviceKind.values.toSet(),
+            ),
+            child: CompletedPanel(controller: controller, selection: _selection),
+          ),
       };
 
   /// 页序圆点（v1.20 改回原本的形）：7dp 圆点、当前页强调色，切换时颜色

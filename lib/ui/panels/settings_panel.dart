@@ -99,7 +99,6 @@ class _SettingsPanelState extends State<SettingsPanel> {
   void initState() {
     super.initState();
     _c.addListener(_onChange);
-    _c.refreshTrash();
     // 版本号是异步从安装包元数据里读的，进设置页时问一次就够（幂等）。
     // 桌面上没有这张卡，也就不必去问平台。
     if (_c.caps.about) _c.loadAppVersion();
@@ -155,8 +154,6 @@ class _SettingsPanelState extends State<SettingsPanel> {
         _SectionCard('灵感', [_notesSection(s)]),
 
         _SectionCard('主题', _themeSection(s)),
-
-        _SectionCard('回收站', [_trashSection()]),
 
         if (_c.caps.about) _SectionCard('关于', _aboutSection()),
       ],
@@ -412,13 +409,6 @@ class _SettingsPanelState extends State<SettingsPanel> {
         ),
       ];
 
-  Widget _trashSection() => ListTile(
-        leading: const Icon(Icons.delete_sweep_outlined),
-        title: Text('清空回收（${_c.trashTasks.length} 件）'),
-        subtitle: const Text('删除的任务先进回收站，可捞回'),
-        onTap: _c.trashTasks.isEmpty ? null : () => _purgeTrash(context),
-      );
-
   // ---------- 关于（§9 第 14 条）----------
 
   /// 版本号由 [AppController.loadAppVersion] 从安装包元数据读回（安卓 versionName /
@@ -557,31 +547,6 @@ class _SettingsPanelState extends State<SettingsPanel> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(removed == 0 ? '没有需要整理的副本' : '已删掉 $removed 份副本'),
     ));
-  }
-
-  Future<void> _purgeTrash(BuildContext context) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('清空回收站？'),
-        content: const Text('将真正删除回收站里的文件，不可恢复。'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('清空')),
-        ],
-      ),
-    );
-    if (ok == true) {
-      await _c.purgeTrash();
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('回收站已清空')));
-      }
-    }
   }
 }
 

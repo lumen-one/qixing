@@ -7,6 +7,7 @@ import '../domain/routine.dart';
 import '../domain/schedule.dart';
 import '../domain/task.dart';
 import '../domain/time_context.dart';
+import '../domain/trash.dart';
 import '../repository/task_repository.dart';
 import '../scheduler/scheduler.dart';
 

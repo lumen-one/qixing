@@ -34,6 +34,7 @@ Future<void> showTaskMenu(
       TaskMenuKind.overdue => '逾期',
       TaskMenuKind.inProgress => '挂起中',
       TaskMenuKind.completed => '已完成',
+      TaskMenuKind.trash => '回收站',
       TaskMenuKind.loose => '散件',
       TaskMenuKind.branch => '支线',
       _ => null,
@@ -59,6 +60,8 @@ List<TaskMenuEntry> taskMenuEntries(
       TaskMenuKind.pool => _poolEntries(context, controller, task),
       TaskMenuKind.loose => _looseEntries(context, controller, task),
       TaskMenuKind.completed => _completedEntries(context, controller, task),
+      // 回收站里的件不在任何清单里：只有"捞回来"与"真删"两条路。
+      TaskMenuKind.trash => _trashEntries(context, controller, task),
       // 日历弹窗（§6.4）：点按是改期，动作全在长按菜单里。直接复用今日清单那张表——
       // kind 不是 flex，所以不会给出『插队到最前』（"最前"是今日清单的位置）。
       TaskMenuKind.calendar => _todayEntries(context, controller, task, kind),
@@ -307,7 +310,10 @@ enum TaskMenuKind {
   inProgress,
   completed,
   branch,
-  calendar
+  calendar,
+
+  /// 回收站里的条目：只有恢复与彻底删除。
+  trash
 }
 
 class _MenuTag extends StatelessWidget {
@@ -347,6 +353,44 @@ List<TaskMenuEntry> _completedEntries(
       () => deleteTaskWithUndo(context, controller, task)
     ),
   ];
+}
+
+/// 回收站条目（[panels/trash.md](../../../docs/panels/trash.md)）：**恢复** /
+/// **彻底删除**。
+///
+/// 这里不摆『删除』——它已经在回收站里了，"再软删一次"没有意义；真删不可恢复，
+/// 所以走二次确认，也不给撤销 toast（撤销也无从撤销）。
+List<TaskMenuEntry> _trashEntries(
+    BuildContext context, AppController controller, Task task) {
+  return [
+    ('恢复', Icons.restore, () => controller.restoreTask(task.id)),
+    (
+      '彻底删除',
+      Icons.delete_forever,
+      () => purgeTrashTask(context, controller, task),
+    ),
+  ];
+}
+
+/// 彻底删除回收站里的一条：二次确认之后才动，不可恢复。
+Future<void> purgeTrashTask(
+    BuildContext context, AppController controller, Task task) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('彻底删除？'),
+      content: Text('「${task.title}」将从回收站里真正删除，不可恢复。'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消')),
+        FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除')),
+      ],
+    ),
+  );
+  if (ok == true) await controller.purgeTask(task.id);
 }
 
 /// 今日页 ⑥ 散件段的条目（仅无排序档）：这一档散件整段在今日页，所以没有

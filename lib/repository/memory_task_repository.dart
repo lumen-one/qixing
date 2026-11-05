@@ -1,10 +1,11 @@
 import '../domain/task.dart';
+import '../domain/trash.dart';
 import 'task_repository.dart';
 
 /// 内存实现：测试与控制台仿真用。不支持 watch（返回 null）。
 class MemoryTaskRepository implements TaskRepository {
   final Map<String, Task> _store = {};
-  final Map<String, Task> _trash = {};
+  final Map<String, TrashEntry> _trash = {};
 
   @override
   Future<List<Task>> loadAll() async {
@@ -25,17 +26,21 @@ class MemoryTaskRepository implements TaskRepository {
   @override
   Future<void> moveToTrash(String id) async {
     final t = _store.remove(id);
-    if (t != null) _trash[id] = t;
+    if (t != null) _trash[id] = TrashEntry(task: t, deletedAt: DateTime.now());
   }
 
   @override
-  Future<List<Task>> loadTrash() async => _trash.values.toList();
+  Future<List<TrashEntry>> loadTrash() async => _trash.values.toList()
+    ..sort((a, b) => b.deletedAt.compareTo(a.deletedAt));
 
   @override
   Future<void> restore(String id) async {
-    final t = _trash.remove(id);
-    if (t != null) _store[id] = t;
+    final entry = _trash.remove(id);
+    if (entry != null) _store[id] = entry.task;
   }
+
+  @override
+  Future<void> purgeFromTrash(String id) async => _trash.remove(id);
 
   @override
   Future<void> purgeTrash() async => _trash.clear();
