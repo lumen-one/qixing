@@ -380,9 +380,9 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
   /// 点某一天：只把覆盖它的那张卡滚到可见并高亮，不负责让文字出现。
   void _selectDay(DateTime day) {
     setState(() => _selected = day);
-    final covering = widget.mainline.logsCovering(day);
-    if (covering.isEmpty) return;
-    final key = GlobalObjectKey(_logKey(covering.first));
+    final index = _visibleLogs().indexWhere((l) => l.covers(day));
+    if (index < 0) return;
+    final key = GlobalObjectKey('log-card-$index');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = key.currentContext;
       if (ctx == null || !ctx.mounted) return;
@@ -394,10 +394,6 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
       );
     });
   }
-
-  static String _logKey(MainlineLog l) =>
-      'log-${l.start.millisecondsSinceEpoch}-'
-      '${l.end.millisecondsSinceEpoch}-${l.text}';
 
   // ---------- 月记 ----------
 
@@ -479,13 +475,18 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
 
   // ---------- 记录列表（常驻，不依赖选中日） ----------
 
-  Widget _buildLogList(ThemeData theme) {
+  /// 与本月相交的记录段（跨月段在相邻两个月都看得到）。
+  List<MainlineLog> _visibleLogs() {
     final monthStart = DateTime(_month.year, _month.month, 1);
     final monthEnd = DateTime(_month.year, _month.month + 1, 0);
-    final logs = [
+    return [
       for (final l in widget.mainline.logsInOrder)
         if (!l.end.isBefore(monthStart) && !l.start.isAfter(monthEnd)) l,
     ];
+  }
+
+  Widget _buildLogList(ThemeData theme) {
+    final logs = _visibleLogs();
     final steps = _selected == null
         ? <MainlineStep>[]
         : widget.mainline.stepsDoneOn(_selected!);
@@ -511,7 +512,7 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
                     ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
             ),
-          for (final log in logs) _logCard(theme, log),
+          for (var i = 0; i < logs.length; i++) _logCard(theme, logs[i], i),
         ],
       ),
     );
@@ -556,11 +557,12 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
     );
   }
 
-  Widget _logCard(ThemeData theme, MainlineLog log) {
+  Widget _logCard(ThemeData theme, MainlineLog log, int index) {
     final highlighted = _selected != null && log.covers(_selected!);
     final muted = theme.colorScheme.onSurfaceVariant;
     return Padding(
-      key: GlobalObjectKey(_logKey(log)),
+      // 下标做 key：手工写出两条完全相同的段也不会撞 GlobalKey。
+      key: GlobalObjectKey('log-card-$index'),
       padding: const EdgeInsets.only(bottom: 6),
       child: InkWell(
         onTap: widget.readOnly ? null : () => _promptEditLog(log),
