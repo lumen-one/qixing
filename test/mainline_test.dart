@@ -23,10 +23,10 @@ owner: me
 ### 记录
 
 - 2026-10-19 ~ 2026-10-21 连续三天都在写第三章
-- 2026-10-20
+- 2026-10-23
 ''';
 
-    test('解析人工写的文件：步骤、完成时刻、备注、单日/跨日圈', () {
+    test('解析人工写的文件：步骤、完成时刻、备注、单日/跨日记录段', () {
       final result = MarkdownMainlineCodec().decode(sample);
       expect(result.warnings, isEmpty);
       expect(result.mainlines, hasLength(1));
@@ -149,6 +149,21 @@ title: 没闭合
     });
   });
 
+  group('MainlineLog', () {
+    test('含两端：端点相接算重叠，隔一天不算', () {
+      final a = MainlineLog.range(
+          start: DateTime(2026, 10, 2), end: DateTime(2026, 10, 5));
+      bool hit(int from, int to) => a.overlaps(MainlineLog.range(
+          start: DateTime(2026, 10, from), end: DateTime(2026, 10, to)));
+      expect(hit(5, 8), isTrue, reason: '端点相接共用一天');
+      expect(hit(6, 8), isFalse);
+      expect(hit(1, 1), isFalse);
+      expect(hit(1, 2), isTrue);
+      expect(hit(3, 4), isTrue, reason: '被包含');
+      expect(hit(1, 9), isTrue, reason: '整个包住');
+    });
+  });
+
   group('MainlineService', () {
     test('创建 → 勾选记时刻 → 取消清时刻', () async {
       final now = DateTime(2026, 10, 21, 9);
@@ -226,7 +241,80 @@ title: 没闭合
       expect(svc.byId(m.id)!.logs, isEmpty);
     });
 
-    test('记录按内容定位：另一份引擎插了一条更早的圈也不会改错', () async {
+    test('记录段互不重叠：相交 / 被包含 / 端点相接都拒绝，且不落盘', () async {
+      final svc = MainlineService(repo: MemoryMainlineRepository());
+      final m = await svc.create(title: '论文');
+      await svc.addLog(m.id,
+          start: DateTime(2026, 10, 10),
+          end: DateTime(2026, 10, 15),
+          text: '写第三章');
+
+      Future<void> add(int from, int to) => svc.addLog(m.id,
+          start: DateTime(2026, 10, from),
+          end: DateTime(2026, 10, to),
+          text: '撞一段');
+
+      await expectLater(add(8, 11), throwsStateError);
+      await expectLater(add(12, 13), throwsStateError);
+      await expectLater(add(14, 20), throwsStateError);
+      await expectLater(add(15, 18), throwsStateError);
+      await expectLater(add(10, 15), throwsStateError);
+      expect(svc.byId(m.id)!.logs, hasLength(1), reason: '拒绝的不落盘');
+
+      await add(16, 18);
+      expect(svc.byId(m.id)!.logsInOrder.map((l) => l.text),
+          ['写第三章', '撞一段']);
+    });
+
+    test('起止写反按归一后的区间校验；删掉之后空档可再用', () async {
+      final svc = MainlineService(repo: MemoryMainlineRepository());
+      final m = await svc.create(title: '论文');
+      await svc.addLog(m.id,
+          start: DateTime(2026, 10, 10),
+          end: DateTime(2026, 10, 12),
+          text: 'A');
+      await expectLater(
+          svc.addLog(m.id,
+              start: DateTime(2026, 10, 13),
+              end: DateTime(2026, 10, 11),
+              text: 'B'),
+          throwsStateError);
+
+      await svc.removeLog(m.id, MainlineLogRef.of(svc.byId(m.id)!.logs.single));
+      await svc.addLog(m.id,
+          start: DateTime(2026, 10, 11), end: DateTime(2026, 10, 13), text: 'B');
+      expect(svc.byId(m.id)!.logs.single.text, 'B');
+    });
+
+    test('改记录：只改文字不验；改起止撞到别人拒绝，改到空档放行', () async {
+      final svc = MainlineService(repo: MemoryMainlineRepository());
+      final m = await svc.create(title: '论文');
+      await svc.addLog(m.id,
+          start: DateTime(2026, 10, 2), end: DateTime(2026, 10, 4), text: 'A');
+      await svc.addLog(m.id,
+          start: DateTime(2026, 10, 10), end: DateTime(2026, 10, 12), text: 'B');
+      final a = svc.byId(m.id)!.logs.firstWhere((l) => l.text == 'A');
+
+      await svc.updateLog(m.id, MainlineLogRef.of(a), text: 'A 改过');
+      final a2 = svc.byId(m.id)!.logs.firstWhere((l) => l.text == 'A 改过');
+      expect(a2.start, DateTime(2026, 10, 2));
+
+      await expectLater(
+          svc.updateLog(m.id, MainlineLogRef.of(a2),
+              start: DateTime(2026, 10, 11)),
+          throwsStateError);
+      expect(svc.byId(m.id)!.logs.firstWhere((l) => l.text == 'A 改过').start,
+          DateTime(2026, 10, 2),
+          reason: '拒绝的改动不落盘');
+
+      await svc.updateLog(m.id, MainlineLogRef.of(a2),
+          start: DateTime(2026, 10, 5), end: DateTime(2026, 10, 8));
+      final moved = svc.byId(m.id)!.logs.firstWhere((l) => l.text == 'A 改过');
+      expect(moved.start, DateTime(2026, 10, 5));
+      expect(moved.end, DateTime(2026, 10, 8));
+    });
+
+    test('记录按内容定位：另一份引擎插了一条更早的记录也不会改错', () async {
       final repo = MemoryMainlineRepository();
       final mine = MainlineService(repo: repo);
       final m = await mine.create(title: '论文');

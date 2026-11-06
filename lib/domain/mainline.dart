@@ -57,7 +57,8 @@ class MainlineStep {
   String toString() => 'MainlineStep($title, done: $done, at: $doneAt)';
 }
 
-/// 一段记录 = 日历上的一个圈：**连续**日期 + 圈里那段文字。
+/// 一段记录 = 日历上圈出来的一段：**连续**日期 + 文字。段与段不重叠
+/// （写入撞段即拒绝，见 `docs/sockets/mainline.md`）。
 ///
 /// 起止只到"天"，且自动归一：结束早于开始时对调（手改文件写反了也不丢）。
 class MainlineLog {
@@ -85,6 +86,10 @@ class MainlineLog {
     final d = dayOf(day);
     return !d.isBefore(start) && !d.isAfter(end);
   }
+
+  /// 两段有没有共用一天（含两端，所以端点相接也算重叠）。
+  bool overlaps(MainlineLog other) =>
+      !end.isBefore(other.start) && !other.end.isBefore(start);
 
   /// 覆盖的天数（至少 1）。
   int get dayCount => end.difference(start).inDays + 1;
@@ -135,8 +140,8 @@ class MainlineLogRef {
 
 /// 月记：一个月一条文字（记录页切到"月视图"时写的那些）。
 ///
-/// 与 [MainlineLog] 的分界线是**它不覆盖任何一天**：日历格子的小点、当天详情都不认
-/// 它，它只回答"这个月在干什么"。混进圈里会让整月每一天的详情都冒出同一句，
+/// 与 [MainlineLog] 的分界线是**它不覆盖任何一天**：日历格子的小点、记录列表都不认
+/// 它，它只回答"这个月在干什么"。混进记录段里会让整月每一天都冒出同一句，
 /// 所以是独立的类型（`docs/decisions/2026-10-25-mainline-month-note.md`）。
 class MainlineMonthNote {
   final int year;
@@ -229,11 +234,11 @@ class Mainline {
           if (s.doneAt != null && isSameDay(s.doneAt!, day)) s,
       ];
 
-  /// 覆盖那天的圈。
+  /// 覆盖那天的记录段。
   List<MainlineLog> logsCovering(DateTime day) =>
       [for (final l in logs) if (l.covers(day)) l];
 
-  /// 那天有没有内容（勾过步骤 / 圈覆盖）——日历格子的小点用它。
+  /// 那天有没有内容（勾过步骤 / 记录段覆盖）——日历格子的小点用它。
   bool hasActivityOn(DateTime day) =>
       stepsDoneOn(day).isNotEmpty || logsCovering(day).isNotEmpty;
 
