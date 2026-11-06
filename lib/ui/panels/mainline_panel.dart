@@ -212,7 +212,7 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
       onNotification: _onScroll,
       child: PageView(
         controller: _pages,
-        // 记录页里横滑属于日历（拖选日期圈一段），翻页交给页头那颗 `1/2`：
+        // 记录页里横滑属于日历（拖选日期写一段记录），翻页交给页头那颗 `1/2`：
         // 两套横滑抢同一个手势，谁都不肯让，只能按页分工。
         physics: _page == 1
             ? const NeverScrollableScrollPhysics()
@@ -224,7 +224,7 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
             controller: widget.controller,
             mainline: m,
             readOnly: !m.isActive,
-            // 日历区域横滑归圈日期，翻页落在下半区（当天详情 / 空提示）
+            // 日历区域横滑归拖选日期，翻页落在下半区（记录列表 / 空提示）
             onSwipeBack: () => _pages.animateToPage(0,
                 duration: const Duration(milliseconds: 240),
                 curve: Curves.easeOutCubic),

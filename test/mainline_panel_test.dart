@@ -188,7 +188,7 @@ void main() {
     expect(find.text('编辑主线'), findsNothing);
   });
 
-  testWidgets('记录页：按住拖选一段 → 写文字 → 落成日历上的圈', (tester) async {
+  testWidgets('记录页：按住拖选一段 → 写文字 → 常驻列在记录列表', (tester) async {
     // 记录页的日历默认停在**当月**：标签与圈出来的日期都得跟着今天走，
     // 写死月份的话跨月就红（2026-11 踩过一次）。
     final now = DateTime.now();
@@ -229,11 +229,12 @@ void main() {
     expect(logs.single.start, DateTime(now.year, now.month, 19));
     expect(logs.single.end, DateTime(now.year, now.month, 21));
     expect(logs.single.text, '补记三天');
-    // 圈里就有这段字（不用点开）
+    // 文字默认就在下半区，不用点某一天
+    expect(find.text('本月记录 · 1 段'), findsOneWidget);
     expect(find.text('补记三天'), findsOneWidget);
   });
 
-  testWidgets('记录页下半区向右滑 → 回行为链（日历区域仍归圈日期）', (tester) async {
+  testWidgets('记录页下半区向右滑 → 回行为链（日历区域仍归拖选日期）', (tester) async {
     final now = DateTime.now();
     final monthLabel = '${now.year} 年 ${now.month} 月';
     final plain = Mainline(
@@ -254,7 +255,7 @@ void main() {
 
     // 空提示那块 = 下半区：向右拖 → 回行为链
     await tester.drag(
-      find.text('点某一天看当天，或按住拖选一段日期写记录；向右滑回行为链'),
+      find.text('按住日历拖选一段日期写记录；向右滑回行为链'),
       const Offset(160, 0),
     );
     await tester.pumpAndSettle();
@@ -262,7 +263,7 @@ void main() {
     expect(find.text(monthLabel), findsNothing);
   });
 
-  testWidgets('记录页：点当天详情里的圈改文字，改的是那一条', (tester) async {
+  testWidgets('记录页：点记录卡改文字，改的是那一条', (tester) async {
     final now = DateTime.now();
     final mainline = Mainline(
       id: 'ml-5',
@@ -286,10 +287,11 @@ void main() {
     await tester.tap(find.text('1/2'));
     await tester.pumpAndSettle();
 
-    // 点圈里的 11 号 → 下半区列出覆盖这天的圈（格子上那条横条也带同样的文字）
+    // 文字常驻在下半区，不用点开；点 11 号只是高亮对应那张卡
+    expect(find.text('本月记录 · 1 段'), findsOneWidget);
+    expect(find.text('这一段在改稿'), findsOneWidget);
     await tester.tap(find.text('11'));
     await tester.pumpAndSettle();
-    expect(find.text('这一段在改稿'), findsWidgets);
 
     await tester.tap(find.text('这一段在改稿').last);
     await tester.pumpAndSettle();
@@ -302,6 +304,41 @@ void main() {
     expect(logs, hasLength(1));
     expect(logs.single.text, '改成新的说法');
     expect(logs.single.start, DateTime(now.year, now.month, 11));
+  });
+
+  testWidgets('记录页：多段文字默认全展开，不用点某天', (tester) async {
+    final now = DateTime.now();
+    final mainline = Mainline(
+      id: 'ml-6',
+      title: '写作',
+      created: DateTime(2026, 10, 1, 9),
+      steps: const [MainlineStep(title: '开头')],
+      logs: [
+        MainlineLog.range(
+          start: DateTime(now.year, now.month, 2),
+          end: DateTime(now.year, now.month, 5),
+          text: '做 dashboard、笔记插件助手、文档维护系统',
+        ),
+        MainlineLog.range(
+          start: DateTime(now.year, now.month, 9),
+          end: DateTime(now.year, now.month, 12),
+          text: '写架构文档 v2',
+        ),
+      ],
+    );
+    final controller = makeController(prefix: [mainline]);
+    await tester.runAsync(() => controller.mainlineService!.load());
+    await pumpPanel(tester, controller);
+
+    await tester.tap(find.text('写作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1/2'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('本月记录 · 2 段'), findsOneWidget);
+    expect(find.text('做 dashboard、笔记插件助手、文档维护系统'), findsOneWidget);
+    expect(find.text('写架构文档 v2'), findsOneWidget);
+    expect(find.textContaining('· 4 天'), findsNWidgets(2));
   });
 
   testWidgets('记录页：点月头年月切成月记，写一句落库，再点切回日历', (tester) async {

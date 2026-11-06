@@ -8,28 +8,28 @@ import '../theme.dart';
 
 const List<String> _weekLabels = ['一', '二', '三', '四', '五', '六', '日'];
 
-/// 主线『记录』页（ui-interaction.md §6.9）：**log 的展现形式就是这个日历**。
+/// 主线『记录』页（ui-interaction.md §6.9；页细则见 `docs/panels/mainline.md`）。
 ///
-/// - 每天格子里只放日期数字；有内容（勾过步骤 / 圈覆盖）的日子下留一个小点；
-/// - **按住某天拖到另一天** → 松手写文字 → 这一段被一个圆角圈框住，文字在圈里；
-/// - 点某一天 → 下方列当天的自动流水（几点勾了哪一步）与覆盖它的圈；
-/// - **月头那行年月是视图开关**：点它把上半区换成这一年的十二行月记（一个月一句），
-///   再点切回日历。月记不覆盖任何一天，所以它不进格子、也不进当天详情
+/// - 上半区是**不滚动**的月历：格子只放日期数字、有内容的小点、每段一根细条，
+///   细条上不写字；记录段互不重叠，所以同一周的细条横向不相交，一条轨道就够；
+/// - 下半区**不依赖选中日**，进来就常驻列出与本月相交的全部记录段，每段一张卡
+///   （完整正文 + 起止日期与天数）。点某一天只滚到覆盖它的卡并双向高亮，
+///   点卡片才进改文字 / 删除的对话框；
+/// - 月头那行年月是视图开关：点它把上半区换成这一年的十二行月记，再点切回日历。
+///   月记不覆盖任何一天，所以它不进格子、也不进记录列表
 ///   （`docs/decisions/2026-10-25-mainline-month-note.md`）。
 ///
 /// 手势全部走一个 [Listener] + 几何换算（行高 = 可用高/周数、列宽 = 宽/7）：
-/// 日历放在**不滚动的**区域里，纵向拖动不会被外面的列表抢走——跨周圈选要的
-/// 就是这条。放不下时压缩行高、每行最多画三条圈，更多的从当天详情里看。
-///
-/// 横滑按区域分工：**日历里 = 圈日期**（这里不能让给翻页），
-/// **下半区（当天详情 / 空提示）= 翻页**（向右滑回行为链，见 [onSwipeBack]）。
-/// 月记模式下没有日历可圈，整块列表都归翻页那条手势。
+/// 日历放在不滚动的区域里，纵向拖动不会被外面的列表抢走——跨周拖选要的就是这条。
+/// 横滑按区域分工：**日历里 = 拖选日期**（这里不能让给翻页），
+/// **下半区（记录列表 / 空提示）= 翻页**（向右滑回行为链，见 [onSwipeBack]）。
+/// 月记模式下没有日历可拖，整块列表都归翻页那条手势。
 class MainlineLogCalendar extends StatefulWidget {
   final AppController controller;
   final Mainline mainline;
   final bool readOnly;
 
-  /// 下半区向右滑 → 回行为链页（覆盖页用 PageController 翻回去）。
+  /// 下半区向右滑 → 回行为链（覆盖页用 PageController 翻回去）。
   final VoidCallback? onSwipeBack;
 
   const MainlineLogCalendar({
@@ -75,13 +75,13 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
       children: [
         _monthHeader(theme),
         if (_monthView)
-          // 月记没有日历可圈，整块列表让给"右滑回行为链"那条手势。
+          // 月记没有日历可拖，整块列表让给"右滑回行为链"那条手势。
           Expanded(child: _swipeBackLayer(_buildMonthList(theme)))
         else ...[
           const SizedBox(height: 2),
           _weekdayRow(theme),
           Expanded(
-            flex: 3,
+            flex: 2,
             child: LayoutBuilder(builder: (context, box) {
               final layout = _Layout.of(
                   _month, box.maxWidth, box.maxHeight, widget.mainline);
@@ -89,7 +89,7 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
             }),
           ),
           const Divider(height: 1),
-          Expanded(flex: 2, child: _swipeBackLayer(_buildDayDetail(theme))),
+          Expanded(flex: 3, child: _swipeBackLayer(_buildLogList(theme))),
         ],
       ],
     );
@@ -99,10 +99,10 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
 
   double _detailDx = 0;
 
-  /// 下半区（当天详情 / 空提示）向右滑 = 回行为链。
+  /// 下半区（记录列表 / 空提示）向右滑 = 回行为链。
   ///
   /// 日历那块必须留给"拖选日期"，翻页手势只能落在这一半；横向拖动与里面
-  /// ListView 的纵向滚动正交，两边不抢手。
+  /// SingleChildScrollView 的纵向滚动正交，两边不抢手。
   Widget _swipeBackLayer(Widget child) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -242,15 +242,9 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
           _promptNewLog(start: start, end: end);
           return;
         }
-        // 没拖 = 点：落在圈上就改圈，否则选那天
-        final week = layout.weekAt(e.localPosition);
-        final hit = week == null ? null : layout.bandAt(week, e.localPosition);
-        if (hit != null) {
-          _promptEditLog(hit.log);
-          return;
-        }
+        // 没拖 = 点：只选中那天（滚到覆盖它的卡片并高亮），文字本来就在下面。
         final day = layout.dayAt(e.localPosition);
-        if (day != null) setState(() => _selected = day);
+        if (day != null) _selectDay(day);
       },
       onPointerCancel: (_) {
         _dragAnchor = null;
@@ -363,54 +357,47 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
       }
     }
 
-    // 圈（按周分段的多日条）
+    // 每段记录一根细条：不写字、不叠放。段互不重叠，所以同一周里横向也不相交。
     for (final band in week.bands) {
-      if (band.slot >= layout.maxBands) continue;
+      final highlighted = _selected != null && band.log.covers(_selected!);
       children.add(Positioned(
-        left: band.startCol * cellW + 1.5,
-        width: (band.endCol - band.startCol + 1) * cellW - 3,
-        top: layout.dateH + band.slot * layout.bandH,
-        height: math.max(layout.bandH - 2, 7),
-        child: Container(
-          alignment: Alignment.centerLeft,
-          padding: const EdgeInsets.symmetric(horizontal: 4),
+        left: band.startCol * cellW + 2,
+        width: math.max((band.endCol - band.startCol + 1) * cellW - 4, 4),
+        top: layout.dateH + 1,
+        height: 4,
+        child: DecoratedBox(
           decoration: BoxDecoration(
-            color: AppColors.accent.withValues(alpha: 0.14),
+            color: AppColors.accent.withValues(alpha: highlighted ? 1.0 : 0.5),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: AppColors.accent.withValues(alpha: 0.65),
-              width: 1,
-            ),
-          ),
-          child: Text(
-            band.text.isEmpty ? '（空）' : band.text,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.labelSmall?.copyWith(
-              fontSize: 9.5,
-              height: 1.1,
-              color: AppColors.accent,
-            ),
           ),
         ),
       ));
     }
 
-    // 这一周没画出来的圈：右上角 +N（点日期看当天详情）
-    final hidden = week.bands.length - layout.maxBands;
-    if (hidden > 0 && layout.maxBands > 0) {
-      children.add(Positioned(
-        right: 2,
-        top: layout.dateH + (layout.maxBands - 1) * layout.bandH,
-        height: math.max(layout.bandH - 2, 7),
-        child: Text('+$hidden',
-            style: theme.textTheme.labelSmall?.copyWith(
-                fontSize: 9, color: theme.colorScheme.onSurfaceVariant)),
-      ));
-    }
-
     return Stack(children: children);
   }
+
+  /// 点某一天：只把覆盖它的那张卡滚到可见并高亮，不负责让文字出现。
+  void _selectDay(DateTime day) {
+    setState(() => _selected = day);
+    final covering = widget.mainline.logsCovering(day);
+    if (covering.isEmpty) return;
+    final key = GlobalObjectKey(_logKey(covering.first));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = key.currentContext;
+      if (ctx == null || !ctx.mounted) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+        alignment: 0.15,
+      );
+    });
+  }
+
+  static String _logKey(MainlineLog l) =>
+      'log-${l.start.millisecondsSinceEpoch}-'
+      '${l.end.millisecondsSinceEpoch}-${l.text}';
 
   // ---------- 月记 ----------
 
@@ -490,91 +477,148 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
     );
   }
 
-  // ---------- 当天详情 ----------
+  // ---------- 记录列表（常驻，不依赖选中日） ----------
 
-  Widget _buildDayDetail(ThemeData theme) {
-    final day = _selected;
-    if (day == null) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-        child: Text(
-          '点某一天看当天，或按住拖选一段日期写记录；向右滑回行为链',
-          style: theme.textTheme.bodySmall
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-        ),
-      );
-    }
-    final steps = widget.mainline.stepsDoneOn(day);
-    final logs = widget.mainline.logsCovering(day);
-    return ListView(
+  Widget _buildLogList(ThemeData theme) {
+    final monthStart = DateTime(_month.year, _month.month, 1);
+    final monthEnd = DateTime(_month.year, _month.month + 1, 0);
+    final logs = [
+      for (final l in widget.mainline.logsInOrder)
+        if (!l.end.isBefore(monthStart) && !l.start.isAfter(monthEnd)) l,
+    ];
+    final steps = _selected == null
+        ? <MainlineStep>[]
+        : widget.mainline.stepsDoneOn(_selected!);
+    return SingleChildScrollView(
       // 不满一屏也要能 overscroll：覆盖页的上滑退出发生在"末尾之后"。
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
-      children: [
-        Text('${day.month} 月 ${day.day} 日', style: theme.textTheme.titleSmall),
-        const SizedBox(height: 4),
-        if (steps.isEmpty && logs.isEmpty)
-          Text('这一天没有记录',
-              style: theme.textTheme.bodySmall
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('本月记录 · ${logs.length} 段',
+              style: theme.textTheme.labelSmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-        for (final s in steps)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.check_circle,
-                    size: 14, color: AppColors.accent.withValues(alpha: 0.8)),
-                const SizedBox(width: 6),
-                if (s.doneAt != null) ...[
-                  Text(_timeText(s.doneAt!),
-                      style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant)),
-                  const SizedBox(width: 6),
-                ],
-                Expanded(
-                  child: Text(
-                    s.note.trim().isEmpty ? s.title : '${s.title} · ${s.note}',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 6),
+          if (steps.isNotEmpty && _selected != null)
+            _daySteps(theme, _selected!, steps),
+          if (logs.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Text(
+                '按住日历拖选一段日期写记录；向右滑回行为链',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
             ),
-          ),
-        for (final log in logs)
-          InkWell(
-            onTap: widget.readOnly ? null : () => _promptEditLog(log),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
+          for (final log in logs) _logCard(theme, log),
+        ],
+      ),
+    );
+  }
+
+  /// 选中日勾过步骤时补在列表顶部：自动流水是人勾出来的那一半，与手写的记录段分开。
+  Widget _daySteps(ThemeData theme, DateTime day, List<MainlineStep> steps) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${day.month} 月 ${day.day} 日',
+              style: theme.textTheme.titleSmall),
+          const SizedBox(height: 3),
+          for (final s in steps)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    margin: const EdgeInsets.only(top: 5),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: AppColors.accent, width: 1.6),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
+                  Icon(Icons.check_circle,
+                      size: 14, color: AppColors.accent.withValues(alpha: 0.8)),
+                  const SizedBox(width: 6),
+                  if (s.doneAt != null) ...[
+                    Text(_timeText(s.doneAt!),
+                        style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant)),
+                    const SizedBox(width: 6),
+                  ],
                   Expanded(
                     child: Text(
-                      log.text.trim().isEmpty ? '（这段还没写字）' : log.text,
+                      s.note.trim().isEmpty ? s.title : '${s.title} · ${s.note}',
                       style: theme.textTheme.bodySmall,
                     ),
                   ),
                 ],
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
+  Widget _logCard(ThemeData theme, MainlineLog log) {
+    final highlighted = _selected != null && log.covers(_selected!);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    return Padding(
+      key: GlobalObjectKey(_logKey(log)),
+      padding: const EdgeInsets.only(bottom: 6),
+      child: InkWell(
+        onTap: widget.readOnly ? null : () => _promptEditLog(log),
+        borderRadius: BorderRadius.circular(8),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            color: highlighted
+                ? AppColors.accent.withValues(alpha: 0.14)
+                : theme.colorScheme.surfaceContainerHighest
+                    .withValues(alpha: 0.55),
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    width: 3,
+                    color: AppColors.accent
+                        .withValues(alpha: highlighted ? 1.0 : 0.5),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 7, 10, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            log.text.trim().isEmpty
+                                ? '（这段还没写字）'
+                                : log.text.trim(),
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 3),
+                          Text(_cardRangeText(log),
+                              style: theme.textTheme.labelSmall
+                                  ?.copyWith(color: muted)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _cardRangeText(MainlineLog l) {
+    final a = '${l.start.month} 月 ${l.start.day} 日';
+    if (l.dayCount == 1) return a;
+    return '$a – ${l.end.month} 月 ${l.end.day} 日 · ${l.dayCount} 天';
+  }
+
   static String _timeText(DateTime d) =>
-      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+      '${d.hour.toString().padLeft(2, '0')}:'
+      '${d.minute.toString().padLeft(2, '0')}';
 
   // ---------- 写记录 ----------
 
@@ -589,12 +633,16 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
       initial: '',
     );
     if (outcome == null) return;
-    await widget.controller.addMainlineLog(
-      widget.mainline.id,
-      start: start,
-      end: end,
-      text: outcome.text,
-    );
+    try {
+      await widget.controller.addMainlineLog(
+        widget.mainline.id,
+        start: start,
+        end: end,
+        text: outcome.text,
+      );
+    } on StateError catch (e) {
+      _toast(_errorText(e));
+    }
   }
 
   Future<void> _promptEditLog(MainlineLog log) async {
@@ -616,9 +664,16 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
       }
       await widget.controller
           .updateMainlineLog(widget.mainline.id, ref, text: outcome.text);
-    } on StateError {
-      _toast('这一段已经不在了（可能被别处改过）');
+    } on StateError catch (e) {
+      _toast(_errorText(e));
     }
+  }
+
+  /// 服务抛的 StateError 消息本身就是给用户看的中文，去掉 "Bad state: " 前缀即可。
+  static String _errorText(Object e) {
+    final s = e.toString();
+    const prefix = 'Bad state: ';
+    return s.startsWith(prefix) ? s.substring(prefix.length) : s;
   }
 
   void _toast(String message) {
@@ -716,21 +771,17 @@ class _LogOutcome {
 
 // ---------- 几何 ----------
 
-/// 一次布局算好的几何：周行、行高、每周的圈段。手势换算全靠它。
+/// 一次布局算好的几何：周行、行高、每周的细条段。手势换算全靠它。
 class _Layout {
   final List<_Week> weeks;
   final double rowH;
   final double dateH;
-  final double bandH;
-  final int maxBands;
   final double cellW;
 
   const _Layout({
     required this.weeks,
     required this.rowH,
     required this.dateH,
-    required this.bandH,
-    required this.maxBands,
     required this.cellW,
   });
 
@@ -747,9 +798,8 @@ class _Layout {
     final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
     final weekCount = ((lead + daysInMonth) + 6) ~/ 7;
     final rowH = height <= 0 ? 44.0 : height / weekCount;
-    final dateH = math.min(32.0, math.max(rowH - 14, 20.0));
-    final bandH = math.max(math.min(14.0, rowH - dateH - 2), 1.0);
-    final maxBands = math.max(0, math.min(3, ((rowH - dateH - 2) / bandH).floor()));
+    // 细条固定 4dp，压在日期数字下面；不写字，所以不必给文字留余量。
+    final dateH = math.min(30.0, math.max(rowH - 7, 20.0));
 
     final weeks = <_Week>[];
     final logs = mainline.logsInOrder;
@@ -764,25 +814,17 @@ class _Layout {
       final weekStart = DateTime(month.year, month.month, 1 + w * 7 - lead);
       final weekEnd = weekStart.add(const Duration(days: 6));
       final bands = <_BandSegment>[];
-      // 圈只存对象引用，不存下标：命令通道按"起止日 + 原文"定位（见 MainlineLogRef），
-      // 界面这边的下标也用不上。
+      // 段只存对象引用，不存下标：命令通道按"起止日 + 原文"定位（见 MainlineLogRef）。
       for (final log in logs) {
         if (log.end.isBefore(weekStart) || log.start.isAfter(weekEnd)) continue;
         final startCol =
             math.max(0, log.start.difference(weekStart).inDays);
         final endCol = math.min(6, log.end.difference(weekStart).inDays);
         if (startCol > endCol) continue;
-        final used = {for (final b in bands) b.slot};
-        var slot = 0;
-        while (used.contains(slot)) {
-          slot++;
-        }
         bands.add(_BandSegment(
           log: log,
           startCol: startCol,
           endCol: endCol,
-          slot: slot,
-          text: log.text,
         ));
       }
       weeks.add(_Week(cells: cells, weekStart: weekStart, bands: bands));
@@ -792,8 +834,6 @@ class _Layout {
       weeks: weeks,
       rowH: rowH,
       dateH: dateH,
-      bandH: bandH,
-      maxBands: maxBands,
       cellW: width / 7,
     );
   }
@@ -804,27 +844,6 @@ class _Layout {
     final col = (local.dx / cellW).floor();
     if (week < 0 || week >= weeks.length || col < 0 || col > 6) return null;
     return weeks[week].cells[col];
-  }
-
-  _Week? weekAt(Offset local) {
-    if (rowH <= 0 || local.dy < 0) return null;
-    final index = (local.dy / rowH).floor();
-    if (index < 0 || index >= weeks.length) return null;
-    return weeks[index];
-  }
-
-  /// 点在哪条圈上（用周内局部 y 判行，再按该周的列范围判列）。
-  _BandSegment? bandAt(_Week week, Offset local) {
-    final index = weeks.indexOf(week);
-    if (index < 0) return null;
-    final relY = local.dy - weekTop(index);
-    if (relY < dateH) return null;
-    final slot = ((relY - dateH) / bandH).floor();
-    final col = (local.dx / cellW).floor();
-    for (final b in week.bands) {
-      if (b.slot == slot && col >= b.startCol && col <= b.endCol) return b;
-    }
-    return null;
   }
 
   /// 一段日期落在这一周的哪几列；不与本周相交 → null。
@@ -855,14 +874,10 @@ class _BandSegment {
   final MainlineLog log;
   final int startCol;
   final int endCol;
-  final int slot;
-  final String text;
 
   const _BandSegment({
     required this.log,
     required this.startCol,
     required this.endCol,
-    required this.slot,
-    required this.text,
   });
 }
