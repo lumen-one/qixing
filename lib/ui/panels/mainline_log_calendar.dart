@@ -10,8 +10,12 @@ const List<String> _weekLabels = ['一', '二', '三', '四', '五', '六', '日
 
 /// 主线『记录』页（ui-interaction.md §6.9；页细则见 `docs/panels/mainline.md`）。
 ///
-/// - 上半区是**不滚动**的月历：格子只放日期数字、有内容的小点、每段一根细条，
-///   细条上不写字；记录段互不重叠，所以同一周的细条横向不相交，一条轨道就够；
+/// - 上半区是**不滚动的月历**：格子只放日期数字和每段一条**色带**（压在数字后面；
+///   跨周那一侧不留圆角、贴到格子边），色带上不写字；记录段互不重叠，所以同一周的
+///   色带横向不相交，一条轨道就够；
+/// - 色带按段序取主题的四色轮，相邻段必然不同色；下半区记录卡左侧那条竖线用同一个
+///   颜色（`docs/decisions/2026-11-07-mainline-record-decoupled.md`）；
+/// - **勾选步骤不在这一页留痕**：没有小点、没有当天流水，这一页只记人写下的东西；
 /// - 下半区**不依赖选中日**，进来就常驻列出与本月相交的全部记录段，每段一张卡
 ///   （完整正文 + 起止日期与天数）。点某一天只滚到覆盖它的卡并双向高亮，
 ///   点卡片才进改文字 / 删除的对话框；
@@ -84,7 +88,12 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
             flex: 2,
             child: LayoutBuilder(builder: (context, box) {
               final layout = _Layout.of(
-                  _month, box.maxWidth, box.maxHeight, widget.mainline);
+                _month,
+                box.maxWidth,
+                box.maxHeight,
+                widget.mainline,
+                _palette(theme),
+              );
               return _buildGrid(context, theme, layout, box);
             }),
           ),
@@ -305,13 +314,42 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
       }
     }
 
-    // 日期数字 + 内容小点
+    // 每段记录一条色带，压在日期数字后面：不写字、不叠放。段互不重叠，所以同一周里
+    // 横向也不相交。跨周的那一侧不留圆角、贴到格子边，下一行从边起笔，读起来是连着的。
+    final brightness = theme.brightness;
+    for (final band in week.bands) {
+      final highlighted = _selected != null && band.log.covers(_selected!);
+      final alpha = highlighted
+          ? MainlineBandColors.bandAlphaSelected(brightness)
+          : MainlineBandColors.bandAlpha(brightness);
+      children.add(Positioned(
+        left: band.startCol * cellW + (band.continuesLeft ? 0 : 2),
+        width: math.max(
+          (band.endCol - band.startCol + 1) * cellW -
+              (band.continuesLeft ? 0 : 2) -
+              (band.continuesRight ? 0 : 2),
+          4,
+        ),
+        top: (layout.dateH - layout.barH) / 2,
+        height: layout.barH,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: band.color.withValues(alpha: alpha),
+            borderRadius: BorderRadius.horizontal(
+              left: Radius.circular(band.continuesLeft ? 0 : 999),
+              right: Radius.circular(band.continuesRight ? 0 : 999),
+            ),
+          ),
+        ),
+      ));
+    }
+
+    // 日期数字
     for (var col = 0; col < 7; col++) {
       final day = week.cells[col];
       if (day == null) continue;
       final isToday = isSameDay(day, DateTime.now());
       final selected = _selected != null && isSameDay(day, _selected!);
-      final marked = widget.mainline.hasActivityOn(day);
       children.add(Positioned(
         left: col * cellW,
         width: cellW,
@@ -338,37 +376,6 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
                 color: selected ? theme.colorScheme.onPrimary : null,
               ),
             ),
-          ),
-        ),
-      ));
-      if (marked) {
-        children.add(Positioned(
-          left: col * cellW + cellW / 2 - 1.5,
-          top: layout.dateH - 5,
-          width: 3,
-          height: 3,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.accent.withValues(alpha: 0.85),
-            ),
-          ),
-        ));
-      }
-    }
-
-    // 每段记录一根细条：不写字、不叠放。段互不重叠，所以同一周里横向也不相交。
-    for (final band in week.bands) {
-      final highlighted = _selected != null && band.log.covers(_selected!);
-      children.add(Positioned(
-        left: band.startCol * cellW + 2,
-        width: math.max((band.endCol - band.startCol + 1) * cellW - 4, 4),
-        top: layout.dateH + 1,
-        height: 4,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: AppColors.accent.withValues(alpha: highlighted ? 1.0 : 0.5),
-            borderRadius: BorderRadius.circular(999),
           ),
         ),
       ));
@@ -487,9 +494,6 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
 
   Widget _buildLogList(ThemeData theme) {
     final logs = _visibleLogs();
-    final steps = _selected == null
-        ? <MainlineStep>[]
-        : widget.mainline.stepsDoneOn(_selected!);
     return SingleChildScrollView(
       // 不满一屏也要能 overscroll：覆盖页的上滑退出发生在"末尾之后"。
       physics: const AlwaysScrollableScrollPhysics(),
@@ -501,8 +505,6 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
               style: theme.textTheme.labelSmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
           const SizedBox(height: 6),
-          if (steps.isNotEmpty && _selected != null)
-            _daySteps(theme, _selected!, steps),
           if (logs.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
@@ -518,48 +520,22 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
     );
   }
 
-  /// 选中日勾过步骤时补在列表顶部：自动流水是人勾出来的那一半，与手写的记录段分开。
-  Widget _daySteps(ThemeData theme, DateTime day, List<MainlineStep> steps) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('${day.month} 月 ${day.day} 日',
-              style: theme.textTheme.titleSmall),
-          const SizedBox(height: 3),
-          for (final s in steps)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.check_circle,
-                      size: 14, color: AppColors.accent.withValues(alpha: 0.8)),
-                  const SizedBox(width: 6),
-                  if (s.doneAt != null) ...[
-                    Text(_timeText(s.doneAt!),
-                        style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant)),
-                    const SizedBox(width: 6),
-                  ],
-                  Expanded(
-                    child: Text(
-                      s.note.trim().isEmpty ? s.title : '${s.title} · ${s.note}',
-                      style: theme.textTheme.bodySmall,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
+  /// 四色轮（跟主题预设、明暗走）：日历上的色带与记录卡的竖线共用它。
+  List<Color> _palette(ThemeData theme) =>
+      AppColors.preset.bandsFor(theme.brightness);
+
+  /// 这一段在四色轮里的位置：按起始日顺序，与日历上那条色带同一个下标。
+  Color _colorOf(ThemeData theme, MainlineLog log) {
+    final palette = _palette(theme);
+    final ordered = widget.mainline.logsInOrder;
+    final i = ordered.indexWhere((l) => identical(l, log));
+    return palette[(i < 0 ? 0 : i) % palette.length];
   }
 
   Widget _logCard(ThemeData theme, MainlineLog log, int index) {
     final highlighted = _selected != null && log.covers(_selected!);
     final muted = theme.colorScheme.onSurfaceVariant;
+    final color = _colorOf(theme, log);
     return Padding(
       // 下标做 key：手工写出两条完全相同的段也不会撞 GlobalKey。
       key: GlobalObjectKey('log-card-$index'),
@@ -571,7 +547,7 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
           borderRadius: BorderRadius.circular(8),
           child: Container(
             color: highlighted
-                ? AppColors.accent.withValues(alpha: 0.14)
+                ? color.withValues(alpha: 0.14)
                 : theme.colorScheme.surfaceContainerHighest
                     .withValues(alpha: 0.55),
             child: IntrinsicHeight(
@@ -580,8 +556,7 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
                 children: [
                   Container(
                     width: 3,
-                    color: AppColors.accent
-                        .withValues(alpha: highlighted ? 1.0 : 0.5),
+                    color: color.withValues(alpha: highlighted ? 1.0 : 0.55),
                   ),
                   Expanded(
                     child: Padding(
@@ -617,10 +592,6 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
     if (l.dayCount == 1) return a;
     return '$a – ${l.end.month} 月 ${l.end.day} 日 · ${l.dayCount} 天';
   }
-
-  static String _timeText(DateTime d) =>
-      '${d.hour.toString().padLeft(2, '0')}:'
-      '${d.minute.toString().padLeft(2, '0')}';
 
   // ---------- 写记录 ----------
 
@@ -773,17 +744,21 @@ class _LogOutcome {
 
 // ---------- 几何 ----------
 
-/// 一次布局算好的几何：周行、行高、每周的细条段。手势换算全靠它。
+/// 一次布局算好的几何：周行、行高、每周的色带段。手势换算全靠它。
 class _Layout {
   final List<_Week> weeks;
   final double rowH;
   final double dateH;
+
+  /// 色带高度（半行上下）。压在数字后面，所以不占额外的道。
+  final double barH;
   final double cellW;
 
   const _Layout({
     required this.weeks,
     required this.rowH,
     required this.dateH,
+    required this.barH,
     required this.cellW,
   });
 
@@ -794,14 +769,17 @@ class _Layout {
     double width,
     double height,
     Mainline mainline,
+    List<Color> palette,
   ) {
     final first = DateTime(month.year, month.month, 1);
     final lead = (first.weekday + 6) % 7;
     final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
     final weekCount = ((lead + daysInMonth) + 6) ~/ 7;
     final rowH = height <= 0 ? 44.0 : height / weekCount;
-    // 细条固定 4dp，压在日期数字下面；不写字，所以不必给文字留余量。
-    final dateH = math.min(30.0, math.max(rowH - 7, 20.0));
+    // 整行都是格子：数字居中，色带也居中铺在它后面。行高最紧的时候（六周的月份、
+    // 320dp 的面板）带子收到 12dp，仍比数字大一圈。
+    final dateH = rowH;
+    final barH = math.min(20.0, math.max(12.0, rowH * 0.56));
 
     final weeks = <_Week>[];
     final logs = mainline.logsInOrder;
@@ -817,7 +795,9 @@ class _Layout {
       final weekEnd = weekStart.add(const Duration(days: 6));
       final bands = <_BandSegment>[];
       // 段只存对象引用，不存下标：命令通道按"起止日 + 原文"定位（见 MainlineLogRef）。
-      for (final log in logs) {
+      // 颜色按起始日顺序取四色轮——相邻两段下标差 1，天然不同色。
+      for (var i = 0; i < logs.length; i++) {
+        final log = logs[i];
         if (log.end.isBefore(weekStart) || log.start.isAfter(weekEnd)) continue;
         final startCol =
             math.max(0, log.start.difference(weekStart).inDays);
@@ -827,6 +807,9 @@ class _Layout {
           log: log,
           startCol: startCol,
           endCol: endCol,
+          color: palette[i % palette.length],
+          continuesLeft: log.start.isBefore(weekStart),
+          continuesRight: log.end.isAfter(weekEnd),
         ));
       }
       weeks.add(_Week(cells: cells, weekStart: weekStart, bands: bands));
@@ -836,6 +819,7 @@ class _Layout {
       weeks: weeks,
       rowH: rowH,
       dateH: dateH,
+      barH: barH,
       cellW: width / 7,
     );
   }
@@ -876,10 +860,18 @@ class _BandSegment {
   final MainlineLog log;
   final int startCol;
   final int endCol;
+  final Color color;
+
+  /// 这一段从上一周接过来 / 还要接到下一周去：那一侧的圆角去掉、贴到格子边。
+  final bool continuesLeft;
+  final bool continuesRight;
 
   const _BandSegment({
     required this.log,
     required this.startCol,
     required this.endCol,
+    required this.color,
+    required this.continuesLeft,
+    required this.continuesRight,
   });
 }

@@ -1138,6 +1138,10 @@ class AppController extends ChangeNotifier {
   Future<void> completeMainline(String id) =>
       _mainlineCommand((svc) => svc.complete(id));
 
+  /// 废弃归档：不要求勾完，只改状态（`docs/decisions/2026-11-07-mainline-abandon.md`）。
+  Future<void> abandonMainline(String id) =>
+      _mainlineCommand((svc) => svc.abandon(id));
+
   Future<void> _mainlineCommand(
       Future<void> Function(MainlineService svc) op) async {
     final svc = mainlineService;

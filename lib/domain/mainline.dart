@@ -5,7 +5,8 @@
 /// 流水）。所以这一整个文件都是纯 Dart，不认识 TaskService，也不认识 Flutter。
 ///
 /// 一条主线 = 标题 + 一串步骤（行为链）+ 若干段记录（日历上的"圈"）。
-/// 归档 = [Mainline.completedAt] 有值，**只改状态、不删数据**。
+/// 归档 = [Mainline.completedAt] 或 [Mainline.abandonedAt] 有值，**只改状态、不删数据**
+/// （`docs/decisions/2026-11-07-mainline-abandon.md`）。
 library;
 
 /// 同一天（只看年月日）。
@@ -175,6 +176,10 @@ class Mainline {
   /// 归档时刻；null = 在跑（**同时只有一条**在跑）。
   final DateTime? completedAt;
 
+  /// 废弃时刻；与 [completedAt] 一样是归档，区别只在于"做完了"还是"不做了"。
+  /// 两个都为 null 才是在跑；两个都有值（手改出来的边角）按完成算。
+  final DateTime? abandonedAt;
+
   final List<MainlineStep> steps;
   final List<MainlineLog> logs;
   final List<MainlineMonthNote> months;
@@ -184,6 +189,7 @@ class Mainline {
     required this.title,
     required this.created,
     this.completedAt,
+    this.abandonedAt,
     List<MainlineStep> steps = const [],
     List<MainlineLog> logs = const [],
     List<MainlineMonthNote> months = const [],
@@ -206,7 +212,19 @@ class Mainline {
     );
   }
 
-  bool get isActive => completedAt == null;
+  bool get isActive => completedAt == null && abandonedAt == null;
+
+  /// 做完归档（[completedAt] 有值）。两个时刻都有值时按完成算。
+  bool get isCompleted => completedAt != null;
+
+  /// 废弃归档：只在没有完成时刻时成立——手改出两个都有值的条目不冒充两种结局。
+  bool get isAbandoned => completedAt == null && abandonedAt != null;
+
+  /// 归档时刻（完成优先）；null = 在跑。归档列表按它从新到旧排。
+  DateTime? get archivedAt => completedAt ?? abandonedAt;
+
+  /// 归档列表那一行右侧的徽标文字。
+  String get archiveLabel => isAbandoned ? '已废弃' : '已完成';
 
   int get totalSteps => steps.length;
 
@@ -227,20 +245,6 @@ class Mainline {
     }
     return null;
   }
-
-  /// 那天勾掉的步骤（自动流水；要求有完成时刻）。
-  List<MainlineStep> stepsDoneOn(DateTime day) => [
-        for (final s in steps)
-          if (s.doneAt != null && isSameDay(s.doneAt!, day)) s,
-      ];
-
-  /// 覆盖那天的记录段。
-  List<MainlineLog> logsCovering(DateTime day) =>
-      [for (final l in logs) if (l.covers(day)) l];
-
-  /// 那天有没有内容（勾过步骤 / 记录段覆盖）——日历格子的小点用它。
-  bool hasActivityOn(DateTime day) =>
-      stepsDoneOn(day).isNotEmpty || logsCovering(day).isNotEmpty;
 
   /// 记录按起始日升序（日历、归档列表都按这个顺序读）。
   List<MainlineLog> get logsInOrder =>
@@ -275,7 +279,9 @@ class Mainline {
   Mainline copyWith({
     String? title,
     DateTime? completedAt,
+    DateTime? abandonedAt,
     bool clearCompleted = false,
+    bool clearAbandoned = false,
     List<MainlineStep>? steps,
     List<MainlineLog>? logs,
     List<MainlineMonthNote>? months,
@@ -285,6 +291,7 @@ class Mainline {
       title: title ?? this.title,
       created: created,
       completedAt: clearCompleted ? null : (completedAt ?? this.completedAt),
+      abandonedAt: clearAbandoned ? null : (abandonedAt ?? this.abandonedAt),
       steps: steps ?? this.steps,
       logs: logs ?? this.logs,
       months: months ?? this.months,

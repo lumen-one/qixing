@@ -51,9 +51,6 @@ owner: me
       expect(m.logs[0].dayCount, 3);
       expect(m.logs[1].text, isEmpty);
       expect(m.logs[1].dayCount, 1);
-      // 自动流水只认"有完成时刻"的那一步
-      expect(m.stepsDoneOn(DateTime(2026, 10, 19)), hasLength(1));
-      expect(m.hasActivityOn(DateTime(2026, 10, 21)), isTrue);
     });
 
     test('往返：未知 frontmatter 字段保留，正文按模型重写', () {
@@ -89,6 +86,40 @@ owner: me
       expect(decoded.mainlines.last.isActive, isFalse);
     });
 
+    test('废弃：abandoned 一行、徽标是废弃、往返不丢', () {
+      final codec = MarkdownMainlineCodec();
+      final m = Mainline(
+        id: 'ml-x',
+        title: '放弃的方向',
+        created: DateTime(2026, 9, 1),
+        abandonedAt: DateTime(2026, 10, 2, 20, 30),
+      );
+      final raw = codec.encode([m]);
+      expect(raw, contains('abandoned: 2026-10-02T20:30'));
+      expect(raw.contains('completed:'), isFalse);
+
+      final again = codec.decode(raw).mainlines.single;
+      expect(again.abandonedAt, DateTime(2026, 10, 2, 20, 30));
+      expect(again.isActive, isFalse);
+      expect(again.isAbandoned, isTrue);
+      expect(again.isCompleted, isFalse);
+      expect(again.archiveLabel, '已废弃');
+      expect(again.archivedAt, DateTime(2026, 10, 2, 20, 30));
+    });
+
+    test('两个归档时刻都有值（手改边角）：按完成算', () {
+      final m = Mainline(
+        id: 'ml-y',
+        title: '两条都有',
+        created: DateTime(2026, 9, 1),
+        completedAt: DateTime(2026, 9, 20),
+        abandonedAt: DateTime(2026, 9, 21),
+      );
+      expect(m.isAbandoned, isFalse);
+      expect(m.archiveLabel, '已完成');
+      expect(m.archivedAt, DateTime(2026, 9, 20));
+    });
+
     test('月记：一条一行，手写重复行以后者为准，往返不丢', () {
       const raw = '''---
 id: ml-m
@@ -115,8 +146,8 @@ created: 2026-10-01T09:00
       expect(m.months, hasLength(2), reason: '同一个月只留一条');
       expect(m.monthNoteOf(2026, 10)?.text, '十月改口了');
       expect(m.monthsInOrder.map((n) => n.month), [9, 10]);
-      // 月记不参与"哪天有内容"的判定
-      expect(m.hasActivityOn(DateTime(2026, 10, 21)), isFalse);
+      // 月记不落进记录段：它不覆盖任何一天
+      expect(m.logs, hasLength(1));
 
       final encoded = codec.encode([m]);
       expect(encoded, contains('### 月记'));
@@ -206,6 +237,36 @@ title: 没闭合
       final m = await svc.create(title: '空主线');
       expect(svc.byId(m.id)!.isAllDone, isFalse);
       await expectLater(svc.complete(m.id), throwsStateError);
+    });
+
+    test('废弃不要求勾完：active 空、不写完成时刻、数据仍在', () async {
+      final svc = MainlineService(
+        repo: MemoryMainlineRepository(),
+        clock: () => DateTime(2026, 10, 21, 20, 30),
+      );
+      final m = await svc.create(title: '论文', steps: ['a', 'b']);
+      await svc.toggleStep(m.id, 0, done: true);
+
+      await svc.abandon(m.id);
+      final after = svc.byId(m.id)!;
+      expect(after.isActive, isFalse);
+      expect(after.isAbandoned, isTrue);
+      expect(after.completedAt, isNull);
+      expect(after.abandonedAt, DateTime(2026, 10, 21, 20, 30));
+      expect(after.steps, hasLength(2));
+      expect(svc.active, isNull);
+      expect(svc.archived, hasLength(1));
+    });
+
+    test('已归档的不能再废弃 / 再完成', () async {
+      final svc = MainlineService(repo: MemoryMainlineRepository());
+      final m = await svc.create(title: '论文', steps: ['a']);
+      await svc.abandon(m.id);
+      await svc.abandon(m.id);
+      await svc.complete(m.id); // 全勾完也不行：已经不在跑了
+      final after = svc.byId(m.id)!;
+      expect(after.completedAt, isNull);
+      expect(after.abandonedAt, isNotNull);
     });
 
     test('整链重写保留完成状态（拖动排序不把勾掉的状态丢掉）', () async {
@@ -376,7 +437,7 @@ title: 没闭合
       expect(two.active?.logs.single.text, '写');
     });
 
-    test('两条归档主线按完成时刻从新到旧', () async {
+    test('归档列表：完成与废弃混排，按归档时刻从新到旧', () async {
       var now = DateTime(2026, 10, 1, 9);
       final svc = MainlineService(
         repo: MemoryMainlineRepository(),
@@ -388,10 +449,15 @@ title: 没闭合
 
       now = DateTime(2026, 10, 5, 9);
       final b = await svc.create(title: 'B', steps: ['y']);
-      await svc.toggleStep(b.id, 0, done: true);
-      await svc.complete(b.id);
+      await svc.abandon(b.id);
 
-      expect(svc.archived.map((m) => m.title), ['B', 'A']);
+      now = DateTime(2026, 10, 9, 9);
+      final c = await svc.create(title: 'C', steps: ['z']);
+      await svc.toggleStep(c.id, 0, done: true);
+      await svc.complete(c.id);
+
+      expect(svc.archived.map((m) => m.title), ['C', 'B', 'A']);
+      expect(svc.archived.map((m) => m.archiveLabel), ['已完成', '已废弃', '已完成']);
       expect(svc.active, isNull);
     });
   });

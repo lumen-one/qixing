@@ -61,6 +61,10 @@ enum AppThemePreset {
     );
   }
 
+  /// 当前明暗下的记录段四色（主线记录页消费），见 [MainlineBandColors]。
+  List<Color> bandsFor(Brightness brightness) =>
+      MainlineBandColors.of(brightness, this);
+
   static AppThemePreset fromId(String? id) => AppThemePreset.values.firstWhere(
         (p) => p.id == id,
         orElse: () => AppThemePreset.orange,
@@ -165,6 +169,38 @@ class CalendarDotColors {
   /// 不参与彩色点的竞争。
   static const Color doneLight = Color(0xFF938476);
   static const Color doneDark = Color(0xFF8B7A68);
+}
+
+/// 主线记录页的四色轮（`docs/decisions/2026-11-07-mainline-record-decoupled.md`）。
+///
+/// 四个色相从强调色种子起每 90° 取一个，**同一明度、同一饱和度**——段与段之间没有等级，
+/// 谁深谁浅都会被读成"重要 / 次要"。色相整圈均分也让它离语义色（逾期橙红、完成暖灰）
+/// 足够远：那两颗是状态，这四个只是标签。换主题整套跟着转，不会出现"日历是一套色系、
+/// 按钮是另一套"。
+class MainlineBandColors {
+  static const int count = 4;
+
+  static List<Color> of(Brightness brightness, AppThemePreset preset) {
+    final dark = brightness == Brightness.dark;
+    final base = HSLColor.fromColor(preset.seed);
+    return [
+      for (var i = 0; i < count; i++)
+        HSLColor.fromAHSL(
+          1,
+          (base.hue + i * 90) % 360,
+          dark ? 0.42 : 0.55,
+          dark ? 0.66 : 0.46,
+        ).toColor(),
+    ];
+  }
+
+  /// 色带铺在日期数字后面，浓度要压到数字仍清楚；深色底上反过来要更浓才看得出来。
+  static double bandAlpha(Brightness brightness) =>
+      brightness == Brightness.dark ? 0.34 : 0.30;
+
+  /// 选中那天的色带：同一色相加深一档（不是换色，选中的是"这一段"）。
+  static double bandAlphaSelected(Brightness brightness) =>
+      brightness == Brightness.dark ? 0.58 : 0.52;
 }
 
 ThemeData buildAppTheme(Brightness brightness,

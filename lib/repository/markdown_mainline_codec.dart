@@ -34,7 +34,13 @@ import 'mainline_codec.dart';
 /// 月记不覆盖任何一天，所以它单独一段、单独一行格式。
 class MarkdownMainlineCodec implements MainlineCodec {
   /// 应用拥有的 frontmatter 字段。
-  static const List<String> _ownedKeys = ['id', 'title', 'created', 'completed'];
+  static const List<String> _ownedKeys = [
+    'id',
+    'title',
+    'created',
+    'completed',
+    'abandoned',
+  ];
 
   @override
   String get formatId => 'md-mainline/1';
@@ -93,6 +99,7 @@ class MarkdownMainlineCodec implements MainlineCodec {
         created: _parseIso(block.fields['created']) ??
             DateTime.fromMillisecondsSinceEpoch(0),
         completedAt: _parseIso(block.fields['completed']),
+        abandonedAt: _parseIso(block.fields['abandoned']),
         steps: steps,
         logs: logs,
         months: monthNotes,
@@ -249,6 +256,9 @@ class MarkdownMainlineCodec implements MainlineCodec {
         return _fmtIso(m.created);
       case 'completed':
         final at = m.completedAt;
+        return at == null ? null : _fmtIso(at);
+      case 'abandoned':
+        final at = m.abandonedAt;
         return at == null ? null : _fmtIso(at);
       default:
         return null;

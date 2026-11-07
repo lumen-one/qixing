@@ -105,7 +105,7 @@ void main() {
     expect(find.text('列提纲'), findsOneWidget);
     expect(find.text('写第三章'), findsOneWidget);
     expect(find.text('通读一遍'), findsOneWidget);
-    expect(find.textContaining('已完成的主线'), findsOneWidget);
+    expect(find.textContaining('归档 ·'), findsOneWidget);
 
     // 返回 → 回到原来的四页
     await tester.tap(find.byIcon(Icons.arrow_back));
@@ -400,5 +400,75 @@ void main() {
     await tester.tap(find.text('1/2'));
     await tester.pumpAndSettle();
     expect(find.text(monthLabel), findsOneWidget);
+  });
+
+  testWidgets('没勾完：标题行是废弃，确认后归档、顶栏回到新建入口', (tester) async {
+    final controller = makeController(prefix: [sample()]);
+    await tester.runAsync(() => controller.mainlineService!.load());
+    await pumpPanel(tester, controller);
+
+    await tester.tap(find.text('论文冲刺'));
+    await tester.pumpAndSettle();
+
+    // 没勾完 → 那个位置是废弃，不是完成
+    expect(find.byTooltip('废弃主线'), findsOneWidget);
+    expect(find.byTooltip('完成主线'), findsNothing);
+
+    await tester.tap(find.byTooltip('废弃主线'));
+    await tester.pumpAndSettle();
+    expect(find.text('废弃这条主线？'), findsOneWidget);
+
+    await tester.tap(find.text('废弃'));
+    await tester.pumpAndSettle();
+
+    // 覆盖页收起，顶栏回到新建入口；归档里那一条标"已废弃"
+    expect(find.text('＋ 新建主线'), findsOneWidget);
+    expect(controller.activeMainline, isNull);
+    final archived = controller.archivedMainlines.single;
+    expect(archived.isAbandoned, isTrue);
+    expect(archived.completedAt, isNull);
+    expect(archived.steps, hasLength(3), reason: '归档不删数据');
+  });
+
+  testWidgets('归档列表：两类并排、各带徽标与日期，点一条进只读页', (tester) async {
+    final controller = makeController(prefix: [
+      sample(),
+      Mainline(
+        id: 'ml-old',
+        title: '旧方向',
+        created: DateTime(2026, 8, 1),
+        abandonedAt: DateTime(2026, 9, 2, 18),
+      ),
+      Mainline(
+        id: 'ml-done',
+        title: '做完了的',
+        created: DateTime(2026, 7, 1),
+        completedAt: DateTime(2026, 9, 20, 18),
+      ),
+    ]);
+    await tester.runAsync(() => controller.mainlineService!.load());
+    await pumpPanel(tester, controller);
+
+    await tester.tap(find.text('论文冲刺'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('归档 ·'));
+    await tester.pumpAndSettle();
+
+    final sheet = find.byType(BottomSheet);
+    expect(find.descendant(of: sheet, matching: find.text('已废弃')),
+        findsOneWidget);
+    expect(find.descendant(of: sheet, matching: find.text('已完成')),
+        findsOneWidget);
+    expect(find.textContaining('09-02'), findsOneWidget);
+    expect(find.textContaining('09-20'), findsOneWidget);
+
+    await tester.tap(find.text('旧方向'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('已归档 · 2026-09-02 废弃'), findsOneWidget);
+    expect(find.text('返回当前'), findsOneWidget);
+    // 只读：没有编辑、没有废弃/完成
+    expect(find.byTooltip('编辑'), findsNothing);
+    expect(find.byTooltip('废弃主线'), findsNothing);
   });
 }

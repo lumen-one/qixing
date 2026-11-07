@@ -34,7 +34,7 @@ class MainlineService {
     return null;
   }
 
-  /// 已归档的主线（新→旧）。
+  /// 已归档的主线（新→旧）：完成的和废弃的并在一起，按归档时刻排。
   List<Mainline> get archived => [for (final m in _items) if (!m.isActive) m];
 
   Mainline? byId(String id) {
@@ -175,6 +175,13 @@ class MainlineService {
         return m.copyWith(completedAt: _clock());
       });
 
+  /// 废弃归档：**不要求勾完**，也不写完成时刻——它回答的是"不做了"，不是"做完了"。
+  /// 与 [complete] 一样只改状态，数据一行不删；归档后同样只读、同样不能恢复。
+  Future<void> abandon(String id) => _mutate(id, (m) {
+        if (!m.isActive) return m;
+        return m.copyWith(abandonedAt: _clock());
+      });
+
   // ---------- 内部 ----------
 
   /// 段与段不重叠：只要共用一天就拒绝，报出撞到的那一段。抛错发生在 `change` 里，
@@ -221,13 +228,13 @@ class MainlineService {
     return changed;
   }
 
-  /// 在跑的在前；已归档的按完成时刻从新到旧（没有完成时刻的垫底）。
+  /// 在跑的在前；已归档的按归档时刻从新到旧（没有时刻的垫底）。
   static List<Mainline> _sort(List<Mainline> items) {
     final active = [for (final m in items) if (m.isActive) m];
     final archived = [for (final m in items) if (!m.isActive) m]
       ..sort((a, b) {
-        final x = a.completedAt;
-        final y = b.completedAt;
+        final x = a.archivedAt;
+        final y = b.archivedAt;
         if (x == null && y == null) return 0;
         if (x == null) return 1;
         if (y == null) return -1;

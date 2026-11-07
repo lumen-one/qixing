@@ -179,9 +179,13 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
                 onPressed: () => setState(() => _viewingId = null),
                 child: const Text('返回当前'),
               ),
+            // 结束主线只有两种：勾完了是『完成』，没勾完是『废弃』。共用一个位置——
+            // 它回答的是"这条结束了没有"，不会同时需要两样。
             if (m != null && !_isReadingArchive && m.isAllDone)
               _iconButton(
                   Icons.check_circle_outline, '完成主线', () => _archive(m)),
+            if (m != null && !_isReadingArchive && !m.isAllDone)
+              _iconButton(Icons.block, '废弃主线', () => _abandon(m)),
           ],
         ],
       ),
@@ -290,7 +294,7 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
               const SizedBox(height: 6),
               TextButton(
                 onPressed: _showArchive,
-                child: Text('已完成的主线 · ${archived.length} 条'),
+                child: Text('归档 · ${archived.length} 条'),
               ),
             ],
           ],
@@ -362,7 +366,7 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    '已完成的主线 · ${archived.length} 条',
+                    '归档 · ${archived.length} 条',
                     style: theme.textTheme.bodySmall
                         ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
@@ -378,7 +382,8 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
   }
 
   Widget _archivedBanner(ThemeData theme, Mainline m) {
-    final at = m.completedAt;
+    final at = m.archivedAt;
+    final how = m.isAbandoned ? '废弃' : '完成';
     return Container(
       margin: const EdgeInsets.fromLTRB(6, 4, 6, 8),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -388,15 +393,14 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
       ),
       child: Row(
         children: [
-          Icon(Icons.inventory_2_outlined,
+          Icon(m.isAbandoned ? Icons.block : Icons.inventory_2_outlined,
               size: 15, color: theme.colorScheme.onSurfaceVariant),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
               at == null
                   ? '已归档 · 只读'
-                  : '已归档 · ${at.year}-${at.month.toString().padLeft(2, '0')}'
-                      '-${at.day.toString().padLeft(2, '0')} 完成 · 只读',
+                  : '已归档 · ${_dayText(at)} $how · 只读',
               style: theme.textTheme.labelSmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
@@ -748,6 +752,34 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
     }
   }
 
+  /// 废弃：不要求勾完。确认一次，因为归档之后只能看、不能恢复。
+  Future<void> _abandon(Mainline m) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('废弃这条主线？'),
+        content: const Text('废弃后从顶栏撤下，整条（行为链 + 记录）留在 主线.md 里，'
+            '之后只能只读查看。它不会记成"已完成"，也不能恢复。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('再想想')),
+          FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('废弃')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await widget.controller.abandonMainline(m.id);
+      if (!mounted) return;
+      widget.onClose();
+    } catch (e) {
+      _toast('$e');
+    }
+  }
+
   Future<void> _showArchive() async {
     final items = widget.controller.archivedMainlines;
     final picked = await showModalBottomSheet<String>(
@@ -762,7 +794,8 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-                child: Text('已完成的主线', style: theme.textTheme.titleSmall),
+                child: Text('归档 · ${items.length} 条',
+                    style: theme.textTheme.titleSmall),
               ),
               if (items.isEmpty)
                 Padding(
@@ -776,19 +809,7 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
                   child: ListView(
                     shrinkWrap: true,
                     children: [
-                      for (final m in items)
-                        ListTile(
-                          dense: true,
-                          leading: const Icon(Icons.inventory_2_outlined,
-                              size: 18),
-                          title: Text(m.title, maxLines: 1,
-                              overflow: TextOverflow.ellipsis),
-                          subtitle: Text(
-                            '完成于 ${_dayText(m.completedAt)} · ${m.progressText}',
-                            style: theme.textTheme.labelSmall,
-                          ),
-                          onTap: () => Navigator.of(ctx).pop(m.id),
-                        ),
+                      for (final m in items) _archiveRow(theme, ctx, m),
                     ],
                   ),
                 ),
@@ -806,10 +827,71 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
     }
   }
 
+  /// 归档列表一行：主线名占满，右端是结局徽标与归档日期（今年的省掉年份）。
+  Widget _archiveRow(ThemeData theme, BuildContext ctx, Mainline m) {
+    return InkWell(
+      onTap: () => Navigator.of(ctx).pop(m.id),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                m.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _archiveBadge(theme, m),
+            const SizedBox(width: 8),
+            Text(
+              _archiveDate(m.archivedAt),
+              style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 「已完成」用强调色，「已废弃」退回中性——两种结局，但只有一种值得标色。
+  Widget _archiveBadge(ThemeData theme, Mainline m) {
+    final abandoned = m.isAbandoned;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: abandoned
+            ? theme.colorScheme.surfaceContainerHighest
+            : AppColors.accent.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        m.archiveLabel,
+        style: theme.textTheme.labelSmall?.copyWith(
+          fontSize: 10.5,
+          color: abandoned
+              ? theme.colorScheme.onSurfaceVariant
+              : AppColors.accent,
+        ),
+      ),
+    );
+  }
+
   static String _dayText(DateTime? d) => d == null
       ? '—'
       : '${d.year}-${d.month.toString().padLeft(2, '0')}-'
           '${d.day.toString().padLeft(2, '0')}';
+
+  /// 归档列表右端那一天：今年的省掉年份，跨年的带上。
+  static String _archiveDate(DateTime? d) {
+    if (d == null) return '—';
+    final md = '${d.month.toString().padLeft(2, '0')}-'
+        '${d.day.toString().padLeft(2, '0')}';
+    return d.year == DateTime.now().year ? md : '${d.year}-$md';
+  }
 
   void _toast(String message) {
     ScaffoldMessenger.maybeOf(context)
