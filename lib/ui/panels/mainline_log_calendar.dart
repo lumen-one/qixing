@@ -289,31 +289,6 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
     final week = layout.weeks[weekIndex];
     final children = <Widget>[];
 
-    // 拖选中的临时高亮（铺在日期数字底下）
-    if (_dragging) {
-      final a = _dragAnchor;
-      final b = _dragCursor;
-      if (a != null && b != null) {
-        final start = a.isBefore(b) ? a : b;
-        final end = a.isBefore(b) ? b : a;
-        final seg = layout.segmentOf(start, end, weekIndex);
-        if (seg != null) {
-          children.add(Positioned(
-            left: seg.$1 * cellW + 2,
-            width: (seg.$2 - seg.$1 + 1) * cellW - 4,
-            top: 2,
-            height: layout.dateH - 4,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: AppColors.accent.withValues(alpha: 0.22),
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-          ));
-        }
-      }
-    }
-
     // 每段记录一条色带，压在日期数字后面：不写字、不叠放。段互不重叠，所以同一周里
     // 横向也不相交。跨周的那一侧不留圆角、贴到格子边，下一行从边起笔，读起来是连着的。
     final brightness = theme.brightness;
@@ -342,6 +317,31 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
           ),
         ),
       ));
+    }
+
+    // 拖选中的临时高亮：铺在色带之上、数字之下，压着已有段也看得见框到哪几天。
+    if (_dragging) {
+      final a = _dragAnchor;
+      final b = _dragCursor;
+      if (a != null && b != null) {
+        final start = a.isBefore(b) ? a : b;
+        final end = a.isBefore(b) ? b : a;
+        final seg = layout.segmentOf(start, end, weekIndex);
+        if (seg != null) {
+          children.add(Positioned(
+            left: seg.$1 * cellW + 2,
+            width: (seg.$2 - seg.$1 + 1) * cellW - 4,
+            top: 2,
+            height: layout.dateH - 4,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.22),
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ));
+        }
+      }
     }
 
     // 日期数字
