@@ -6,6 +6,7 @@ import 'package:flutter/material.dart' show ThemeMode;
 
 import '../application/branch_service.dart';
 import '../application/delivery.dart';
+import '../application/logbook_service.dart';
 import '../application/mainline_service.dart';
 import '../application/notification_window.dart';
 import '../application/notes_reader.dart';
@@ -19,6 +20,7 @@ import '../application/task_service.dart';
 import '../application/today_view.dart';
 import '../domain/branch.dart';
 import '../domain/event.dart';
+import '../domain/logbook.dart';
 import '../domain/mainline.dart';
 import '../domain/plan.dart';
 import '../domain/routine.dart';
@@ -54,6 +56,11 @@ class AppController extends ChangeNotifier {
   ///
   /// 与 [service] 完全并列、互不依赖：行为链步骤不是任务，主线不参与调度。
   final MainlineService? mainlineService;
+
+  /// 记录册服务（panels/record.md；null = 未装配，记录页读空册子）。
+  ///
+  /// 与 [mainlineService] **互不依赖**：记录不是主线的附属，没有主线也照写。
+  final LogBookService? logBookService;
 
   /// 编排服务（ui-interaction.md §6.11；null = 未装配，下拉不进）。
   ///
@@ -794,6 +801,7 @@ class AppController extends ChangeNotifier {
     required this.taskDir,
     this.routineService,
     this.mainlineService,
+    this.logBookService,
     this.planService,
     this.branchService,
     this.speedNoteService,
@@ -833,6 +841,11 @@ class AppController extends ChangeNotifier {
       await mainlineService?.load();
     } catch (_) {
       // 主线读失败不阻塞启动：顶栏显示『＋ 新建主线』，下次 refresh 再试
+    }
+    try {
+      await logBookService?.load();
+    } catch (_) {
+      // 记录读失败不阻塞启动：记录页先空着，下次 refresh 再试
     }
     try {
       await planService?.load();
@@ -1100,40 +1113,6 @@ class AppController extends ChangeNotifier {
   Future<void> addMainlineStep(String id, String title) =>
       _mainlineCommand((svc) => svc.addStep(id, title));
 
-  /// 记录段：拖选一段连续日期后写文字；撞上已有段会抛错，由界面提示。
-  Future<void> addMainlineLog(
-    String id, {
-    required DateTime start,
-    required DateTime end,
-    String text = '',
-  }) =>
-      _mainlineCommand((svc) =>
-          svc.addLog(id, start: start, end: end, text: text));
-
-  /// 改一段记录：按内容（起止日 + 原文）定位，不传下标——中间多一条别人的记录就
-  /// 会改错（见 `MainlineLogRef`）。已经不在时会抛错，由界面提示。
-  Future<void> updateMainlineLog(
-    String id,
-    MainlineLogRef ref, {
-    DateTime? start,
-    DateTime? end,
-    String? text,
-  }) =>
-      _mainlineCommand((svc) =>
-          svc.updateLog(id, ref, start: start, end: end, text: text));
-
-  Future<void> removeMainlineLog(String id, MainlineLogRef ref) =>
-      _mainlineCommand((svc) => svc.removeLog(id, ref));
-
-  /// 月记：一个月一句（记录页切到月视图时写；空文本 = 删掉这个月那条）。
-  Future<void> setMainlineMonthNote(
-    String id,
-    int year,
-    int month,
-    String text,
-  ) =>
-      _mainlineCommand((svc) => svc.setMonthNote(id, year, month, text));
-
   /// 归档（行为链必须全勾完；没勾完会抛 StateError，由 UI 提示）。
   Future<void> completeMainline(String id) =>
       _mainlineCommand((svc) => svc.complete(id));
@@ -1145,6 +1124,51 @@ class AppController extends ChangeNotifier {
   Future<void> _mainlineCommand(
       Future<void> Function(MainlineService svc) op) async {
     final svc = mainlineService;
+    if (svc == null) return;
+    await op(svc);
+    notifyListeners();
+  }
+
+  // ---- 记录册（panels/record.md）----
+  //
+  // 与主线各走各的：这些命令没有一条要主线 id，也不问主线在不在跑——记录页没有
+  // "只读"这回事。
+
+  /// 记录册是否接入（未装配的宿主 / 老测试为 false：记录页读空册子）。
+  bool get hasLogBook => logBookService != null;
+
+  /// 当前这一份记录册（不可变快照）；未装配 → 空册子。
+  LogBook get logBook => logBookService?.book ?? LogBook.empty;
+
+  /// 记录段：拖选一段连续日期后写文字；撞上已有段会抛错，由界面提示。
+  Future<void> addLog({
+    required DateTime start,
+    required DateTime end,
+    String text = '',
+  }) =>
+      _logBookCommand((svc) => svc.add(start: start, end: end, text: text));
+
+  /// 改一段记录：按内容（起止日 + 原文）定位，不传下标——中间多一条别人的记录就
+  /// 会改错（见 `LogSegmentRef`）。已经不在时会抛错，由界面提示。
+  Future<void> updateLog(
+    LogSegmentRef ref, {
+    DateTime? start,
+    DateTime? end,
+    String? text,
+  }) =>
+      _logBookCommand(
+          (svc) => svc.update(ref, start: start, end: end, text: text));
+
+  Future<void> removeLog(LogSegmentRef ref) =>
+      _logBookCommand((svc) => svc.remove(ref));
+
+  /// 月记：一个月一句（记录页切到月视图时写；空文本 = 删掉这个月那条）。
+  Future<void> setMonthNote(int year, int month, String text) =>
+      _logBookCommand((svc) => svc.setMonthNote(year, month, text));
+
+  Future<void> _logBookCommand(
+      Future<void> Function(LogBookService svc) op) async {
+    final svc = logBookService;
     if (svc == null) return;
     await op(svc);
     notifyListeners();
@@ -1483,6 +1507,11 @@ class AppController extends ChangeNotifier {
       await mainlineService?.load();
     } catch (_) {
       // 读失败保留上次内存态（顶栏宁可不更新，也别闪成空）
+    }
+    try {
+      await logBookService?.load();
+    } catch (_) {
+      // 记录同理：读失败保留上次内存态（记录页宁可不更新，也别闪成空）
     }
     // 编排同理（`编排.md` 与 `主线.md` 是同一类：整份由应用维护）。
     try {

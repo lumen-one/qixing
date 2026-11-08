@@ -1,18 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:qixing/application/logbook_service.dart';
 import 'package:qixing/application/mainline_service.dart';
 import 'package:qixing/application/task_service.dart';
+import 'package:qixing/domain/logbook.dart';
 import 'package:qixing/domain/mainline.dart';
 import 'package:qixing/domain/time_context.dart';
+import 'package:qixing/repository/memory_logbook_repository.dart';
 import 'package:qixing/repository/memory_mainline_repository.dart';
 import 'package:qixing/repository/memory_task_repository.dart';
 import 'package:qixing/scheduler/slack_scheduler.dart';
 import 'package:qixing/ui/app_controller.dart';
+import 'package:qixing/ui/panels/mainline_panel.dart';
 import 'package:qixing/ui/panels/side_panel.dart';
 
-/// 主线入口（ui-interaction.md §6.9）：顶栏第二行 + 覆盖页。
+/// 主线覆盖页（ui-interaction.md §6.9）与记录页（panels/record.md §6.15）。
 void main() {
-  AppController makeController({List<Mainline> prefix = const []}) {
+  AppController makeController({
+    List<Mainline> prefix = const [],
+    List<LogSegment> segments = const [],
+    List<MonthNote> months = const [],
+  }) {
     final tasks = TaskService(
       repo: MemoryTaskRepository(),
       scheduler: const SlackScheduler(),
@@ -26,7 +34,17 @@ void main() {
         repo: MemoryMainlineRepository(prefix),
         clock: () => DateTime(2026, 10, 21, 9),
       ),
+      logBookService: LogBookService(
+        repo: MemoryLogBookRepository(
+          LogBook(segments: segments, months: months),
+        ),
+      ),
     );
+  }
+
+  Future<void> boot(WidgetTester tester, AppController controller) async {
+    await tester.runAsync(() => controller.mainlineService!.load());
+    await tester.runAsync(() => controller.logBookService!.load());
   }
 
   Future<void> pumpPanel(
@@ -66,18 +84,23 @@ void main() {
           const MainlineStep(title: '写第三章'),
           const MainlineStep(title: '通读一遍'),
         ],
-        logs: [
-          MainlineLog.range(
-            start: DateTime(2026, 10, 19),
-            end: DateTime(2026, 10, 21),
-            text: '连续三天都在写',
-          ),
-        ],
       );
 
-  testWidgets('没有主线：顶栏第二行是新建入口，点开是空态', (tester) async {
+  /// 在日历上按住 [from] 号拖到 [to] 号（记录页的拖选）。
+  Future<void> dragDays(WidgetTester tester, int from, int to) async {
+    final start = tester.getCenter(find.text('$from'));
+    final end = tester.getCenter(find.text('$to'));
+    final gesture = await tester.startGesture(start);
+    await tester.pump(const Duration(milliseconds: 30));
+    await gesture.moveTo(end);
+    await tester.pump(const Duration(milliseconds: 30));
+    await gesture.up();
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('没有主线：顶栏第二行是新建入口，点开是空态，照样能翻到记录页', (tester) async {
     final controller = makeController();
-    await tester.runAsync(() => controller.mainlineService!.load());
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     expect(find.text('＋ 新建主线'), findsOneWidget);
@@ -86,11 +109,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('还没有主线'), findsOneWidget);
     expect(find.text('新建主线'), findsOneWidget);
+
+    // 记录页与主线无关：没有主线时那颗 `1/2` 也在，点它就能过去
+    final now = DateTime.now();
+    expect(find.text('1/2'), findsOneWidget);
+    await tester.tap(find.text('1/2'));
+    await tester.pumpAndSettle();
+    expect(find.text('${now.year} 年 ${now.month} 月'), findsOneWidget);
+    expect(controller.mainlineOpen, isTrue);
   });
 
   testWidgets('有主线：顶栏显示名字与进度，点开盖住面板显示行为链', (tester) async {
     final controller = makeController(prefix: [sample()]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     // 第二行：名字 + 进度（1/3）
@@ -114,9 +145,29 @@ void main() {
     expect(find.text('论文冲刺'), findsOneWidget);
   });
 
+  testWidgets('步骤标题过长换行：不再截成一行', (tester) async {
+    const long = '学习数模电、数理，边做项目边补，先把第三章写完再回头补附录里的推导和实验数据';
+    final controller = makeController(prefix: [
+      Mainline(
+        id: 'ml-long',
+        title: '长标题',
+        created: DateTime(2026, 10, 1, 9),
+        steps: const [MainlineStep(title: long)],
+      ),
+    ]);
+    await boot(tester, controller);
+    await pumpPanel(tester, controller);
+
+    await tester.tap(find.text('长标题'));
+    await tester.pumpAndSettle();
+
+    final size = tester.getSize(find.text(long));
+    expect(size.height, greaterThan(30), reason: '至少两行，单行只有十几 dp');
+  });
+
   testWidgets('行为链滚到底再上滑：覆盖页收回', (tester) async {
     final controller = makeController(prefix: [sample()]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     await tester.tap(find.text('论文冲刺'));
@@ -133,7 +184,7 @@ void main() {
 
   testWidgets('覆盖页进出都是滑动：途中在落点上方，退场滑完才摘子树', (tester) async {
     final controller = makeController(prefix: [sample()]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     await tester.tap(find.text('论文冲刺'));
@@ -160,8 +211,9 @@ void main() {
     expect(find.text('论文冲刺'), findsOneWidget);
   });
 
-  testWidgets('覆盖页铅笔进编辑态：可加一步、保存后进度跟着变', (tester) async {    final controller = makeController(prefix: [sample()]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+  testWidgets('覆盖页铅笔进编辑态：可加一步、保存后进度跟着变', (tester) async {
+    final controller = makeController(prefix: [sample()]);
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     await tester.tap(find.text('论文冲刺'));
@@ -193,14 +245,15 @@ void main() {
     // 写死月份的话跨月就红（2026-11 踩过一次）。
     final now = DateTime.now();
     final monthLabel = '${now.year} 年 ${now.month} 月';
-    final plain = Mainline(
-      id: 'ml-2',
-      title: '写作',
-      created: DateTime(2026, 10, 1, 9),
-      steps: const [MainlineStep(title: '开头')],
-    );
-    final controller = makeController(prefix: [plain]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    final controller = makeController(prefix: [
+      Mainline(
+        id: 'ml-2',
+        title: '写作',
+        created: DateTime(2026, 10, 1, 9),
+        steps: const [MainlineStep(title: '开头')],
+      ),
+    ]);
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     await tester.tap(find.text('写作'));
@@ -210,21 +263,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(monthLabel), findsOneWidget);
 
-    final from = tester.getCenter(find.text('19'));
-    final to = tester.getCenter(find.text('21'));
-    final gesture = await tester.startGesture(from);
-    await tester.pump(const Duration(milliseconds: 30));
-    await gesture.moveTo(to);
-    await tester.pump(const Duration(milliseconds: 30));
-    await gesture.up();
-    await tester.pumpAndSettle();
+    await dragDays(tester, 19, 21);
 
     expect(find.text('这一段记点什么'), findsOneWidget);
     await tester.enterText(find.byType(TextField).last, '补记三天');
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
-    final logs = controller.activeMainline!.logs;
+    final logs = controller.logBook.segments;
     expect(logs, hasLength(1));
     expect(logs.single.start, DateTime(now.year, now.month, 19));
     expect(logs.single.end, DateTime(now.year, now.month, 21));
@@ -237,14 +283,15 @@ void main() {
   testWidgets('记录页下半区向右滑 → 回行为链（日历区域仍归拖选日期）', (tester) async {
     final now = DateTime.now();
     final monthLabel = '${now.year} 年 ${now.month} 月';
-    final plain = Mainline(
-      id: 'ml-3',
-      title: '写作',
-      created: DateTime(2026, 10, 1, 9),
-      steps: const [MainlineStep(title: '开头')],
-    );
-    final controller = makeController(prefix: [plain]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    final controller = makeController(prefix: [
+      Mainline(
+        id: 'ml-3',
+        title: '写作',
+        created: DateTime(2026, 10, 1, 9),
+        steps: const [MainlineStep(title: '开头')],
+      ),
+    ]);
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     await tester.tap(find.text('写作'));
@@ -255,7 +302,7 @@ void main() {
 
     // 空提示那块 = 下半区：向右拖 → 回行为链
     await tester.drag(
-      find.text('按住日历拖选一段日期写记录；向右滑回行为链'),
+      find.text('按住日历拖选一段日期写记录；向右滑回主线'),
       const Offset(160, 0),
     );
     await tester.pumpAndSettle();
@@ -265,21 +312,24 @@ void main() {
 
   testWidgets('记录页：点记录卡改文字，改的是那一条', (tester) async {
     final now = DateTime.now();
-    final mainline = Mainline(
-      id: 'ml-5',
-      title: '写作',
-      created: DateTime(2026, 10, 1, 9),
-      steps: const [MainlineStep(title: '开头')],
-      logs: [
-        MainlineLog.range(
+    final controller = makeController(
+      prefix: [
+        Mainline(
+          id: 'ml-5',
+          title: '写作',
+          created: DateTime(2026, 10, 1, 9),
+          steps: const [MainlineStep(title: '开头')],
+        ),
+      ],
+      segments: [
+        LogSegment.range(
           start: DateTime(now.year, now.month, 11),
           end: DateTime(now.year, now.month, 12),
           text: '这一段在改稿',
         ),
       ],
     );
-    final controller = makeController(prefix: [mainline]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     await tester.tap(find.text('写作'));
@@ -300,7 +350,7 @@ void main() {
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
-    final logs = controller.activeMainline!.logs;
+    final logs = controller.logBook.segments;
     expect(logs, hasLength(1));
     expect(logs.single.text, '改成新的说法');
     expect(logs.single.start, DateTime(now.year, now.month, 11));
@@ -308,26 +358,29 @@ void main() {
 
   testWidgets('记录页：多段文字默认全展开，不用点某天', (tester) async {
     final now = DateTime.now();
-    final mainline = Mainline(
-      id: 'ml-6',
-      title: '写作',
-      created: DateTime(2026, 10, 1, 9),
-      steps: const [MainlineStep(title: '开头')],
-      logs: [
-        MainlineLog.range(
+    final controller = makeController(
+      prefix: [
+        Mainline(
+          id: 'ml-6',
+          title: '写作',
+          created: DateTime(2026, 10, 1, 9),
+          steps: const [MainlineStep(title: '开头')],
+        ),
+      ],
+      segments: [
+        LogSegment.range(
           start: DateTime(now.year, now.month, 2),
           end: DateTime(now.year, now.month, 5),
           text: '做 dashboard、笔记插件助手、文档维护系统',
         ),
-        MainlineLog.range(
+        LogSegment.range(
           start: DateTime(now.year, now.month, 9),
           end: DateTime(now.year, now.month, 12),
           text: '写架构文档 v2',
         ),
       ],
     );
-    final controller = makeController(prefix: [mainline]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     await tester.tap(find.text('写作'));
@@ -342,14 +395,15 @@ void main() {
   });
 
   testWidgets('记录页：点月头年月切成月记，写一句落库，再点切回日历', (tester) async {
-    final plain = Mainline(
-      id: 'ml-4',
-      title: '写作',
-      created: DateTime(2026, 10, 1, 9),
-      steps: const [MainlineStep(title: '开头')],
-    );
-    final controller = makeController(prefix: [plain]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    final controller = makeController(prefix: [
+      Mainline(
+        id: 'ml-4',
+        title: '写作',
+        created: DateTime(2026, 10, 1, 9),
+        steps: const [MainlineStep(title: '开头')],
+      ),
+    ]);
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     await tester.tap(find.text('写作'));
@@ -373,7 +427,7 @@ void main() {
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
-    final note = controller.activeMainline!.monthNoteOf(now.year, now.month);
+    final note = controller.logBook.monthNoteOf(now.year, now.month);
     expect(note?.text, '把第三章写完');
     expect(find.text('把第三章写完'), findsOneWidget);
     expect(find.text('记一句'), findsNWidgets(11), reason: '写过的那行不再提示');
@@ -388,7 +442,7 @@ void main() {
     final now = DateTime.now();
     final monthLabel = '${now.year} 年 ${now.month} 月';
     final controller = makeController(prefix: [sample()]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    await boot(tester, controller);
     await pumpPanel(tester, controller, width: 240, height: 480);
 
     expect(find.text('论文冲刺'), findsOneWidget);
@@ -402,23 +456,37 @@ void main() {
     expect(find.text(monthLabel), findsOneWidget);
   });
 
-  testWidgets('没勾完：标题行是废弃，确认后归档、顶栏回到新建入口', (tester) async {
+  testWidgets('没勾完：废弃在进度行右端，确认后归档、顶栏回到新建入口', (tester) async {
     final controller = makeController(prefix: [sample()]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     await tester.tap(find.text('论文冲刺'));
     await tester.pumpAndSettle();
 
-    // 没勾完 → 那个位置是废弃，不是完成
-    expect(find.byTooltip('废弃主线'), findsOneWidget);
+    // 没勾完 → 进度行右端是废弃；标题行不再有那颗图标
+    final overlay = find.byType(MainlineOverlay);
+    final abandon = find.descendant(of: overlay, matching: find.text('废弃'));
+    expect(abandon, findsOneWidget);
+    expect(find.byTooltip('废弃主线'), findsNothing);
     expect(find.byTooltip('完成主线'), findsNothing);
+    // 在进度行上，不在标题行：比标题行那颗名字低一截
+    expect(
+      tester.getCenter(abandon).dy,
+      greaterThan(
+        tester
+                .getCenter(find.descendant(
+                    of: overlay, matching: find.text('论文冲刺')))
+                .dy +
+            20,
+      ),
+    );
 
-    await tester.tap(find.byTooltip('废弃主线'));
+    await tester.tap(abandon);
     await tester.pumpAndSettle();
     expect(find.text('废弃这条主线？'), findsOneWidget);
 
-    await tester.tap(find.text('废弃'));
+    await tester.tap(find.widgetWithText(FilledButton, '废弃'));
     await tester.pumpAndSettle();
 
     // 覆盖页收起，顶栏回到新建入口；归档里那一条标"已废弃"
@@ -430,7 +498,50 @@ void main() {
     expect(archived.steps, hasLength(3), reason: '归档不删数据');
   });
 
-  testWidgets('归档列表：两类并排、各带徽标与日期，点一条进只读页', (tester) async {
+  testWidgets('归档主线不动记录：归档之后记录页照样进得去、写得进', (tester) async {
+    final controller = makeController(prefix: [sample()]);
+    await boot(tester, controller);
+    await pumpPanel(tester, controller);
+
+    await tester.tap(find.text('论文冲刺'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1/2'));
+    await tester.pumpAndSettle();
+    await dragDays(tester, 19, 21);
+    await tester.enterText(find.byType(TextField).last, '第一段');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(controller.logBook.segments, hasLength(1));
+
+    // 回到行为链，把主线废弃掉（覆盖页随之收起）
+    await tester.drag(
+      find.text('本月记录 · 1 段'),
+      const Offset(160, 0),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('废弃'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '废弃'));
+    await tester.pumpAndSettle();
+    expect(controller.activeMainline, isNull);
+
+    // 没有主线了：一样点开 → 翻到记录页 → 那一段还在，还能再圈一段
+    await tester.tap(find.text('＋ 新建主线'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1/2'));
+    await tester.pumpAndSettle();
+    expect(find.text('第一段'), findsOneWidget);
+
+    await dragDays(tester, 10, 11);
+    await tester.enterText(find.byType(TextField).last, '第二段');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(controller.logBook.segments, hasLength(2));
+    expect(find.text('本月记录 · 2 段'), findsOneWidget);
+  });
+
+  testWidgets('归档列表：两类并排、各带徽标与日期，点一条进只读页（单页）', (tester) async {
     final controller = makeController(prefix: [
       sample(),
       Mainline(
@@ -446,7 +557,7 @@ void main() {
         completedAt: DateTime(2026, 9, 20, 18),
       ),
     ]);
-    await tester.runAsync(() => controller.mainlineService!.load());
+    await boot(tester, controller);
     await pumpPanel(tester, controller);
 
     await tester.tap(find.text('论文冲刺'));
@@ -467,8 +578,9 @@ void main() {
 
     expect(find.textContaining('已归档 · 2026-09-02 废弃'), findsOneWidget);
     expect(find.text('返回当前'), findsOneWidget);
-    // 只读：没有编辑、没有废弃/完成
+    // 只读 + 单页：没有编辑、没有废弃/完成，也没有 1/2
     expect(find.byTooltip('编辑'), findsNothing);
-    expect(find.byTooltip('废弃主线'), findsNothing);
+    expect(find.text('废弃'), findsNothing);
+    expect(find.text('1/2'), findsNothing);
   });
 }

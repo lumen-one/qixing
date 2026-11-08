@@ -1,9 +1,9 @@
 import '../domain/mainline.dart';
 import 'mainline_codec.dart';
 
-/// `主线.md` 编解码（formatId: `md-mainline/1`，格式见 architecture.md 附录 B.6）。
+/// `主线.md` 编解码（formatId: `md-mainline/1`，格式见 formats/mainline.md B.6）。
 ///
-/// 文件结构：**一条主线一个 frontmatter 块**，块与块之间是正文：
+/// 文件结构：**一条主线一个 frontmatter 块**，块里只有行为链：
 ///
 /// ```markdown
 /// ---
@@ -16,22 +16,14 @@ import 'mainline_codec.dart';
 ///
 /// - [ ] 列提纲
 /// - [x] 写第三章 完成 2026-10-19,21:30 备注：卡了两小时
-///
-/// ### 记录
-///
-/// - 2026-10-19 ~ 2026-10-21 连续三天都在写第三章
-///
-/// ### 月记
-///
-/// - 2026-10 这个月把第三章写完
 /// ```
 ///
 /// 保真：应用拥有的 frontmatter 字段**原地改写**，未知字段/注释/空行原样保留
 /// （与 routines.md 同档）。**正文不保真**——它本身就是数据，保存时按模型重写
 /// （局限登记在 B.6）。解析永不抛异常：坏条目记告警后跳过。
 ///
-/// 月记（`### 月记`）与记录的分工见 `docs/decisions/2026-10-25-mainline-month-note.md`：
-/// 月记不覆盖任何一天，所以它单独一段、单独一行格式。
+/// 记录与月记**不在这份文件里**：它们在 `记录.md`（契约见 `docs/sockets/logbook.md`），
+/// 这里既不解码也不编码。旧版正文里那两段读盘时只留一条告警——保存重写时会一起消失。
 class MarkdownMainlineCodec implements MainlineCodec {
   /// 应用拥有的 frontmatter 字段。
   static const List<String> _ownedKeys = [
@@ -64,34 +56,20 @@ class MarkdownMainlineCodec implements MainlineCodec {
         continue;
       }
       final steps = <MainlineStep>[];
-      final logs = <MainlineLog>[];
-      final monthNotes = <MainlineMonthNote>[];
       var mode = _Section.other;
       for (final line in block.bodyLines) {
         final t = line.trim();
         if (t.isEmpty) continue;
-        final section = _sectionOf(t);
-        if (section != null) {
-          mode = section;
-          continue;
-        }
         if (t.startsWith('#')) {
-          mode = _Section.other; // 人加的别的小标题：这一段不认
+          mode = _sectionOf(t);
           continue;
         }
         if (mode == _Section.steps && t.startsWith('- [')) {
           steps.add(_parseStep(t));
-        } else if (mode == _Section.logs && t.startsWith('- ')) {
-          final log = _parseLog(t);
-          if (log != null) logs.add(log);
-        } else if (mode == _Section.months && t.startsWith('- ')) {
-          final note = _parseMonthNote(t);
-          if (note != null) {
-            // 手写重复行时后者为准（一个月只留一条）
-            monthNotes.removeWhere((n) => n.isFor(note.year, note.month));
-            monthNotes.add(note);
-          }
         }
+      }
+      if (_legacyRecordLines(block.bodyLines) > 0) {
+        warnings.add('主线.md: $id 有旧版的记录段，内容请搬进 记录.md（保存后会丢掉）');
       }
       mainlines.add(Mainline(
         id: id,
@@ -101,8 +79,6 @@ class MarkdownMainlineCodec implements MainlineCodec {
         completedAt: _parseIso(block.fields['completed']),
         abandonedAt: _parseIso(block.fields['abandoned']),
         steps: steps,
-        logs: logs,
-        months: monthNotes,
       ));
     }
     return MainlineDecodeResult(mainlines, warnings);
@@ -147,17 +123,6 @@ class MarkdownMainlineCodec implements MainlineCodec {
       for (final s in m.steps) {
         out.write('${_encodeStep(s)}\n');
       }
-      out.write('\n### 记录\n\n');
-      for (final l in m.logsInOrder) {
-        out.write('${_encodeLog(l)}\n');
-      }
-      // 一个月都没写就不留空段：老文件保存后形状不变。
-      if (m.months.isNotEmpty) {
-        out.write('\n### 月记\n\n');
-        for (final n in m.monthsInOrder) {
-          out.write('${_encodeMonthNote(n)}\n');
-        }
-      }
       if (i != mainlines.length - 1) out.write('\n');
     }
     return out.toString();
@@ -171,20 +136,6 @@ class MarkdownMainlineCodec implements MainlineCodec {
     if (at != null) b.write(' 完成 ${_fmtDateTime(at)}');
     if (s.note.trim().isNotEmpty) b.write(' 备注：${_oneLine(s.note)}');
     return b.toString();
-  }
-
-  static String _encodeLog(MainlineLog l) {
-    final head = isSameDay(l.start, l.end)
-        ? _fmtDate(l.start)
-        : '${_fmtDate(l.start)} ~ ${_fmtDate(l.end)}';
-    final text = _oneLine(l.text).trim();
-    return text.isEmpty ? '- $head' : '- $head $text';
-  }
-
-  static String _encodeMonthNote(MainlineMonthNote n) {
-    final head = '${n.year.toString().padLeft(4, '0')}-${_two(n.month)}';
-    final text = _oneLine(n.text).trim();
-    return text.isEmpty ? '- $head' : '- $head $text';
   }
 
   /// 一行复选框 → 步骤。字段从右往左剥：先 `备注：`，再 `完成 <时刻>`，
@@ -212,35 +163,6 @@ class MarkdownMainlineCodec implements MainlineCodec {
       done: m.group(1)!.toLowerCase() == 'x',
       doneAt: doneAt,
       note: note,
-    );
-  }
-
-  /// 一行记录 → 圈。行首必须是日期，否则算人写的自由文字（忽略）。
-  static MainlineLog? _parseLog(String line) {
-    final m = RegExp(
-      r'^-\s*(\d{4}-\d{2}-\d{2})(?:\s*~\s*(\d{4}-\d{2}-\d{2}))?\s*(.*)$',
-    ).firstMatch(line);
-    if (m == null) return null;
-    final start = _parseDate(m.group(1)!);
-    final end = _parseDate(m.group(2) ?? m.group(1)!);
-    if (start == null || end == null) return null;
-    return MainlineLog.range(start: start, end: end, text: m.group(3)!.trim());
-  }
-
-  /// 一行月记 → 月记。行首必须是 `年-月`（两位数月份），否则忽略。
-  ///
-  /// 与 [_parseLog] 的日期行不撞：那边要完整的 `年-月-日`，`2026-10` 匹配不上。
-  static MainlineMonthNote? _parseMonthNote(String line) {
-    final m =
-        RegExp(r'^-\s*(\d{4})-(\d{1,2})\s*(.*)$').firstMatch(line);
-    if (m == null) return null;
-    final year = int.parse(m.group(1)!);
-    final month = int.parse(m.group(2)!);
-    if (month < 1 || month > 12) return null;
-    return MainlineMonthNote(
-      year: year,
-      month: month,
-      text: m.group(3)!.trim(),
     );
   }
 
@@ -321,19 +243,33 @@ class MarkdownMainlineCodec implements MainlineCodec {
     return line.substring(0, idx).trim();
   }
 
-  /// 小标题 → 段落；认不出的返回 null（交给调用方判断"是不是别人的标题"）。
-  static _Section? _sectionOf(String trimmedLine) {
-    if (!trimmedLine.startsWith('#')) return null;
+  /// 小标题 → 段落。行为链之外一律 other：人加的别的小标题整段不认。
+  static _Section _sectionOf(String trimmedLine) {
     final text = trimmedLine.replaceFirst(RegExp(r'^#+\s*'), '').trim();
     if (text.startsWith('行为链')) return _Section.steps;
-    if (text.startsWith('月记')) return _Section.months;
-    if (text.startsWith('记录')) return _Section.logs;
-    return null;
+    return _Section.other;
+  }
+
+  /// 旧版正文里 `### 记录` / `### 月记` 两段还有多少行内容（只用来报警，不读）。
+  static int _legacyRecordLines(List<String> lines) {
+    var count = 0;
+    var inLegacy = false;
+    for (final line in lines) {
+      final t = line.trim();
+      if (t.startsWith('#')) {
+        final text = t.replaceFirst(RegExp(r'^#+\s*'), '').trim();
+        inLegacy = text.startsWith('记录') || text.startsWith('月记');
+        continue;
+      }
+      if (inLegacy && t.isNotEmpty) count++;
+    }
+    return count;
   }
 
   // ---------- 格式化 ----------
 
-  static String _oneLine(String s) => s.replaceAll(RegExp(r'\s*\n\s*'), ' ').trim();
+  static String _oneLine(String s) =>
+      s.replaceAll(RegExp(r'\s*\n\s*'), ' ').trim();
 
   static String _two(int n) => n.toString().padLeft(2, '0');
 
@@ -346,16 +282,6 @@ class MarkdownMainlineCodec implements MainlineCodec {
 
   static String _fmtIso(DateTime d) =>
       '${_fmtDate(d)}T${_two(d.hour)}:${_two(d.minute)}';
-
-  static DateTime? _parseDate(String text) {
-    final m = RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})$').firstMatch(text.trim());
-    if (m == null) return null;
-    final y = int.parse(m.group(1)!);
-    final mo = int.parse(m.group(2)!);
-    final d = int.parse(m.group(3)!);
-    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-    return DateTime(y, mo, d);
-  }
 
   /// `2026-10-19,21:30` / `2026-10-19 21:30` / `2026-10-19`（= 当天 00:00）。
   static DateTime? _parseMoment(String token) {
@@ -382,7 +308,7 @@ class MarkdownMainlineCodec implements MainlineCodec {
       original.endsWith('\r') ? '$value\r' : value;
 }
 
-enum _Section { steps, logs, months, other }
+enum _Section { steps, other }
 
 class _Block {
   final List<String> frontLines;
@@ -390,6 +316,4 @@ class _Block {
   final List<String> bodyLines;
 
   const _Block(this.frontLines, this.fields, this.bodyLines);
-
-  String get body => bodyLines.join('\n').trim();
 }

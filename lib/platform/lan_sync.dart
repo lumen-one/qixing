@@ -29,6 +29,7 @@ class LanSyncAdapter implements SyncPort {
     'tasks.md',
     'routines.md',
     '主线.md',
+    '记录.md',
     '编排.md',
     '速记.md',
   ];

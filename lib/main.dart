@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'application/branch_service.dart';
 import 'application/event_log.dart';
+import 'application/logbook_service.dart';
 import 'application/mainline_service.dart';
 import 'application/notification_window.dart';
 import 'application/plan_service.dart';
@@ -19,6 +20,7 @@ import 'platform/app_adapters.dart';
 import 'platform/desktop_adapters.dart';
 import 'platform/lan_sync.dart';
 import 'repository/markdown_branch_repository.dart';
+import 'repository/markdown_logbook_repository.dart';
 import 'repository/markdown_routine_repository.dart';
 import 'repository/markdown_mainline_repository.dart';
 import 'repository/markdown_plan_repository.dart';
@@ -91,6 +93,11 @@ Future<void> main() async {
   );
   await mainlineService.load();
 
+  // 记录册（panels/record.md）：另一份数据（`记录.md`）。**与主线不相交**——没有主线
+  // 也照写，归档主线不改它一行。读失败不阻塞启动（记录页先空着）。
+  final logBookService = LogBookService(repo: MarkdownLogBookRepository(taskDir));
+  await logBookService.load();
+
   // 今日编排（§6.11）：第四份数据（`编排.md`），与任务、周期、主线都不相交。
   // 读失败不阻塞启动（时间轴先空着，回前台再读一次）。
   final planService = PlanService(repo: MarkdownPlanRepository(taskDir));
@@ -132,6 +139,7 @@ Future<void> main() async {
     taskDir: taskDir,
     routineService: routineService,
     mainlineService: mainlineService,
+    logBookService: logBookService,
     planService: planService,
     branchService: branchService,
     speedNoteService: speedNoteService,

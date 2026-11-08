@@ -114,56 +114,6 @@ class MainlineService {
         return m.copyWith(steps: [...m.steps, MainlineStep(title: t)]);
       });
 
-  /// 加一段记录（日历上拖选一段 → 写文字）。与已有段共用一天就拒绝。
-  Future<void> addLog(
-    String id, {
-    required DateTime start,
-    required DateTime end,
-    String text = '',
-  }) =>
-      _mutate(id, (m) {
-        final log = MainlineLog.range(start: start, end: end, text: text);
-        _requireNoOverlap(m.logs, log);
-        return m.copyWith(logs: [...m.logs, log]);
-      });
-
-  /// 改一段记录（文字 / 起止日期）。
-  ///
-  /// 按 [ref] 找回原条目，**不按下标**：界面算出的下标是"排完序后的位置"，而这里
-  /// 每次都要重新读盘再排序，中间别人加了一条更早的记录就会改到别人身上
-  /// （见 [MainlineLogRef]）。找不到 = 这条已经不在了，抛错让界面提示，不猜。
-  Future<void> updateLog(
-    String id,
-    MainlineLogRef ref, {
-    DateTime? start,
-    DateTime? end,
-    String? text,
-  }) =>
-      _mutate(id, (m) {
-        final logs = [...m.logsInOrder];
-        final i = logs.indexWhere(ref.matches);
-        if (i < 0) throw StateError('这段记录已经不在了');
-        final updated = logs[i].copyWith(start: start, end: end, text: text);
-        final others = [...logs]..removeAt(i);
-        _requireNoOverlap(others, updated);
-        logs[i] = updated;
-        return m.copyWith(logs: logs);
-      });
-
-  /// 删一段记录：同样按 [ref] 定位；已经不在 = 目的已达成，什么都不做。
-  Future<void> removeLog(String id, MainlineLogRef ref) => _mutate(id, (m) {
-        final logs = [...m.logsInOrder];
-        final i = logs.indexWhere(ref.matches);
-        if (i < 0) return m;
-        logs.removeAt(i);
-        return m.copyWith(logs: logs);
-      });
-
-  /// 写 / 改某个月的月记。一个月只留一条，所以再写就是改；[text] 为空 = 删掉这条。
-  Future<void> setMonthNote(String id, int year, int month, String text) =>
-      _mutate(id,
-          (m) => m.copyWith(months: m.withMonthNote(year, month, text)));
-
   /// 归档：**行为链必须全部勾完**（空链也不行，见 [Mainline.isAllDone]）。
   ///
   /// 只改状态与归档时刻，数据一行不删——归档后可只读查看。
@@ -183,24 +133,6 @@ class MainlineService {
       });
 
   // ---------- 内部 ----------
-
-  /// 段与段不重叠：只要共用一天就拒绝，报出撞到的那一段。抛错发生在 `change` 里，
-  /// [_mutate] 还没走到落盘那一步，盘上不会多出半条记录。不自动裁剪——那会悄悄
-  /// 改掉用户亲手拖出来的范围。
-  static void _requireNoOverlap(
-    List<MainlineLog> existing,
-    MainlineLog candidate,
-  ) {
-    for (final l in existing) {
-      if (!l.overlaps(candidate)) continue;
-      final label = l.text.trim().isEmpty ? '（没写文字）' : l.text.trim();
-      throw StateError(
-        '这段日期和「$label」重叠了：'
-        '${l.start.month} 月 ${l.start.day} 日 – '
-        '${l.end.month} 月 ${l.end.day} 日',
-      );
-    }
-  }
 
   Future<void> _write(List<Mainline> next) async {
     final sorted = _sort(next);

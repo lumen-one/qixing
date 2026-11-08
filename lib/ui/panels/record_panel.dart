@@ -2,14 +2,16 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../domain/mainline.dart';
+import '../../domain/logbook.dart';
 import '../app_controller.dart';
 import '../theme.dart';
 
 const List<String> _weekLabels = ['一', '二', '三', '四', '五', '六', '日'];
 
-/// 主线『记录』页（ui-interaction.md §6.9；页细则见 `docs/panels/mainline.md`）。
+/// 记录页（`docs/panels/record.md` §6.15）：主线覆盖页的第 2 页，**与主线无关**。
 ///
+/// - 数据只来自 `controller.logBook`（`记录.md`）：没有主线也照写，归档一条主线不改
+///   这里一行，所以这一页**没有只读态**；
 /// - 上半区是**不滚动的月历**：格子只放日期数字和每段一条**色带**（压在数字后面；
 ///   跨周那一侧不留圆角、贴到格子边），色带上不写字；记录段互不重叠，所以同一周的
 ///   色带横向不相交，一条轨道就够；
@@ -28,27 +30,23 @@ const List<String> _weekLabels = ['一', '二', '三', '四', '五', '六', '日
 /// 横滑按区域分工：**日历里 = 拖选日期**（这里不能让给翻页），
 /// **下半区（记录列表 / 空提示）= 翻页**（向右滑回行为链，见 [onSwipeBack]）。
 /// 月记模式下没有日历可拖，整块列表都归翻页那条手势。
-class MainlineLogCalendar extends StatefulWidget {
+class RecordPanel extends StatefulWidget {
   final AppController controller;
-  final Mainline mainline;
-  final bool readOnly;
 
-  /// 下半区向右滑 → 回行为链（覆盖页用 PageController 翻回去）。
+  /// 下半区向右滑 → 回第 1 页（覆盖页用 PageController 翻回去）。
   final VoidCallback? onSwipeBack;
 
-  const MainlineLogCalendar({
+  const RecordPanel({
     super.key,
     required this.controller,
-    required this.mainline,
-    this.readOnly = false,
     this.onSwipeBack,
   });
 
   @override
-  State<MainlineLogCalendar> createState() => _MainlineLogCalendarState();
+  State<RecordPanel> createState() => _RecordPanelState();
 }
 
-class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
+class _RecordPanelState extends State<RecordPanel> {
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month);
   DateTime? _selected;
 
@@ -60,17 +58,8 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
   bool _dragging = false;
   Offset? _downAt;
 
-  @override
-  void didUpdateWidget(covariant MainlineLogCalendar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // 换了一条主线（归档后看另一条）：选中日与拖动态归零
-    if (oldWidget.mainline.id != widget.mainline.id) {
-      _selected = null;
-      _dragAnchor = null;
-      _dragCursor = null;
-      _dragging = false;
-    }
-  }
+  /// 整本记录册里的记录段（按起始日升序）；这一页只读它。
+  List<LogSegment> get _segments => widget.controller.logBook.segmentsInOrder;
 
   @override
   Widget build(BuildContext context) {
@@ -91,7 +80,7 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
                 _month,
                 box.maxWidth,
                 box.maxHeight,
-                widget.mainline,
+                _segments,
                 _palette(theme),
               );
               return _buildGrid(context, theme, layout, box);
@@ -293,7 +282,7 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
     // 横向也不相交。跨周的那一侧不留圆角、贴到格子边，下一行从边起笔，读起来是连着的。
     final brightness = theme.brightness;
     for (final band in week.bands) {
-      final highlighted = _selected != null && band.log.covers(_selected!);
+      final highlighted = _selected != null && band.segment.covers(_selected!);
       final alpha = highlighted
           ? MainlineBandColors.bandAlphaSelected(brightness)
           : MainlineBandColors.bandAlpha(brightness);
@@ -424,13 +413,13 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
   }
 
   Widget _monthRow(ThemeData theme, int year, int month) {
-    final text = widget.mainline.monthNoteOf(year, month)?.text ?? '';
+    final text = widget.controller.logBook.monthNoteOf(year, month)?.text ?? '';
     final written = text.isNotEmpty;
     final now = DateTime.now();
     final isNow = year == now.year && month == now.month;
     final muted = theme.colorScheme.onSurfaceVariant;
     return InkWell(
-      onTap: widget.readOnly ? null : () => _promptMonthNote(year, month),
+      onTap: () => _promptMonthNote(year, month),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
@@ -466,7 +455,7 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
             ),
             Expanded(
               child: Text(
-                written ? text : (widget.readOnly ? '—' : '记一句'),
+                written ? text : '记一句',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
@@ -483,11 +472,11 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
   // ---------- 记录列表（常驻，不依赖选中日） ----------
 
   /// 与本月相交的记录段（跨月段在相邻两个月都看得到）。
-  List<MainlineLog> _visibleLogs() {
+  List<LogSegment> _visibleLogs() {
     final monthStart = DateTime(_month.year, _month.month, 1);
     final monthEnd = DateTime(_month.year, _month.month + 1, 0);
     return [
-      for (final l in widget.mainline.logsInOrder)
+      for (final l in _segments)
         if (!l.end.isBefore(monthStart) && !l.start.isAfter(monthEnd)) l,
     ];
   }
@@ -509,7 +498,7 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Text(
-                '按住日历拖选一段日期写记录；向右滑回行为链',
+                '按住日历拖选一段日期写记录；向右滑回主线',
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
@@ -525,14 +514,13 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
       AppColors.preset.bandsFor(theme.brightness);
 
   /// 这一段在四色轮里的位置：按起始日顺序，与日历上那条色带同一个下标。
-  Color _colorOf(ThemeData theme, MainlineLog log) {
+  Color _colorOf(ThemeData theme, LogSegment segment) {
     final palette = _palette(theme);
-    final ordered = widget.mainline.logsInOrder;
-    final i = ordered.indexWhere((l) => identical(l, log));
+    final i = _segments.indexWhere((s) => identical(s, segment));
     return palette[(i < 0 ? 0 : i) % palette.length];
   }
 
-  Widget _logCard(ThemeData theme, MainlineLog log, int index) {
+  Widget _logCard(ThemeData theme, LogSegment log, int index) {
     final highlighted = _selected != null && log.covers(_selected!);
     final muted = theme.colorScheme.onSurfaceVariant;
     final color = _colorOf(theme, log);
@@ -541,7 +529,7 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
       key: GlobalObjectKey('log-card-$index'),
       padding: const EdgeInsets.only(bottom: 6),
       child: InkWell(
-        onTap: widget.readOnly ? null : () => _promptEditLog(log),
+        onTap: () => _promptEditLog(log),
         borderRadius: BorderRadius.circular(8),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
@@ -587,7 +575,7 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
     );
   }
 
-  static String _cardRangeText(MainlineLog l) {
+  static String _cardRangeText(LogSegment l) {
     final a = '${l.start.month} 月 ${l.start.day} 日';
     if (l.dayCount == 1) return a;
     return '$a – ${l.end.month} 月 ${l.end.day} 日 · ${l.dayCount} 天';
@@ -599,7 +587,6 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
     required DateTime start,
     required DateTime end,
   }) async {
-    if (widget.readOnly) return;
     final outcome = await _textDialog(
       title: '这一段记点什么',
       subtitle: _rangeText(start, end),
@@ -607,19 +594,13 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
     );
     if (outcome == null) return;
     try {
-      await widget.controller.addMainlineLog(
-        widget.mainline.id,
-        start: start,
-        end: end,
-        text: outcome.text,
-      );
+      await widget.controller.addLog(start: start, end: end, text: outcome.text);
     } on StateError catch (e) {
       _toast(_errorText(e));
     }
   }
 
-  Future<void> _promptEditLog(MainlineLog log) async {
-    if (widget.readOnly) return;
+  Future<void> _promptEditLog(LogSegment log) async {
     final outcome = await _textDialog(
       title: '改这一段',
       subtitle: _rangeText(log.start, log.end),
@@ -629,14 +610,13 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
     if (outcome == null) return;
     // 身份取"打开对话框那一刻"的样子：这期间别处把它改了或删了，命令就找不到它、
     // 明确报错——而不是按下标改到另一条上。
-    final ref = MainlineLogRef.of(log);
+    final ref = LogSegmentRef.of(log);
     try {
       if (outcome.deleted) {
-        await widget.controller.removeMainlineLog(widget.mainline.id, ref);
+        await widget.controller.removeLog(ref);
         return;
       }
-      await widget.controller
-          .updateMainlineLog(widget.mainline.id, ref, text: outcome.text);
+      await widget.controller.updateLog(ref, text: outcome.text);
     } on StateError catch (e) {
       _toast(_errorText(e));
     }
@@ -656,8 +636,8 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
 
   /// 写 / 改某个月的月记：一个月只留一条，有字才给删除。
   Future<void> _promptMonthNote(int year, int month) async {
-    if (widget.readOnly) return;
-    final existing = widget.mainline.monthNoteOf(year, month)?.text ?? '';
+    final existing =
+        widget.controller.logBook.monthNoteOf(year, month)?.text ?? '';
     final outcome = await _textDialog(
       title: '$year 年 $month 月',
       subtitle: '一个月写一句：这个月在做什么',
@@ -669,12 +649,8 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
       minLines: 1,
     );
     if (outcome == null) return;
-    await widget.controller.setMainlineMonthNote(
-      widget.mainline.id,
-      year,
-      month,
-      outcome.deleted ? '' : outcome.text,
-    );
+    await widget.controller
+        .setMonthNote(year, month, outcome.deleted ? '' : outcome.text);
   }
 
   Future<_LogOutcome?> _textDialog({
@@ -713,11 +689,13 @@ class _MainlineLogCalendarState extends State<MainlineLogCalendar> {
         actions: [
           if (allowDelete)
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop(const _LogOutcome(deleted: true)),
+              onPressed: () =>
+                  Navigator.of(ctx).pop(const _LogOutcome(deleted: true)),
               child: const Text('删除'),
             ),
           TextButton(
-              onPressed: () => Navigator.of(ctx).pop(), child: const Text('取消')),
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消')),
           FilledButton(
             onPressed: () =>
                 Navigator.of(ctx).pop(_LogOutcome(text: ctrl.text.trim())),
@@ -768,7 +746,7 @@ class _Layout {
     DateTime month,
     double width,
     double height,
-    Mainline mainline,
+    List<LogSegment> segments,
     List<Color> palette,
   ) {
     final first = DateTime(month.year, month.month, 1);
@@ -782,7 +760,6 @@ class _Layout {
     final barH = math.min(20.0, math.max(12.0, rowH * 0.56));
 
     final weeks = <_Week>[];
-    final logs = mainline.logsInOrder;
     for (var w = 0; w < weekCount; w++) {
       final cells = <DateTime?>[];
       for (var col = 0; col < 7; col++) {
@@ -794,22 +771,24 @@ class _Layout {
       final weekStart = DateTime(month.year, month.month, 1 + w * 7 - lead);
       final weekEnd = weekStart.add(const Duration(days: 6));
       final bands = <_BandSegment>[];
-      // 段只存对象引用，不存下标：命令通道按"起止日 + 原文"定位（见 MainlineLogRef）。
+      // 段只存对象引用，不存下标：命令通道按"起止日 + 原文"定位（见 LogSegmentRef）。
       // 颜色按起始日顺序取四色轮——相邻两段下标差 1，天然不同色。
-      for (var i = 0; i < logs.length; i++) {
-        final log = logs[i];
-        if (log.end.isBefore(weekStart) || log.start.isAfter(weekEnd)) continue;
+      for (var i = 0; i < segments.length; i++) {
+        final segment = segments[i];
+        if (segment.end.isBefore(weekStart) || segment.start.isAfter(weekEnd)) {
+          continue;
+        }
         final startCol =
-            math.max(0, log.start.difference(weekStart).inDays);
-        final endCol = math.min(6, log.end.difference(weekStart).inDays);
+            math.max(0, segment.start.difference(weekStart).inDays);
+        final endCol = math.min(6, segment.end.difference(weekStart).inDays);
         if (startCol > endCol) continue;
         bands.add(_BandSegment(
-          log: log,
+          segment: segment,
           startCol: startCol,
           endCol: endCol,
           color: palette[i % palette.length],
-          continuesLeft: log.start.isBefore(weekStart),
-          continuesRight: log.end.isAfter(weekEnd),
+          continuesLeft: segment.start.isBefore(weekStart),
+          continuesRight: segment.end.isAfter(weekEnd),
         ));
       }
       weeks.add(_Week(cells: cells, weekStart: weekStart, bands: bands));
@@ -857,7 +836,7 @@ class _Week {
 }
 
 class _BandSegment {
-  final MainlineLog log;
+  final LogSegment segment;
   final int startCol;
   final int endCol;
   final Color color;
@@ -867,7 +846,7 @@ class _BandSegment {
   final bool continuesRight;
 
   const _BandSegment({
-    required this.log,
+    required this.segment,
     required this.startCol,
     required this.endCol,
     required this.color,

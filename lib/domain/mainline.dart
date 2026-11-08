@@ -1,20 +1,13 @@
-/// 主线（ui-interaction.md §6.9；存储格式见 architecture.md 附录 B.6）。
+/// 主线（ui-interaction.md §6.9；存储格式见 formats/mainline.md B.6）。
 ///
 /// 三层边界：**主线与任务池不相交**——行为链上的步骤不是 Task，不进调度、
-/// 不占工时、不响提醒；主线的"记录"也不进 `.gtd/log.md`（那是全 App 的操作
-/// 流水）。所以这一整个文件都是纯 Dart，不认识 TaskService，也不认识 Flutter。
+/// 不占工时、不响提醒。与记录也不相交：日历上的圈与月记住在另一份数据
+/// （`domain/logbook.dart`），这里一行都不碰。
 ///
-/// 一条主线 = 标题 + 一串步骤（行为链）+ 若干段记录（日历上的"圈"）。
+/// 一条主线 = 标题 + 一串步骤（行为链）。
 /// 归档 = [Mainline.completedAt] 或 [Mainline.abandonedAt] 有值，**只改状态、不删数据**
 /// （`docs/decisions/2026-11-07-mainline-abandon.md`）。
 library;
-
-/// 同一天（只看年月日）。
-bool isSameDay(DateTime a, DateTime b) =>
-    a.year == b.year && a.month == b.month && a.day == b.day;
-
-/// 取当天零点（记录与日期比较一律按"天"算）。
-DateTime dayOf(DateTime d) => DateTime(d.year, d.month, d.day);
 
 /// 行为链上的一步。
 ///
@@ -29,7 +22,7 @@ class MainlineStep {
   /// 完成时刻；null = 完成但没有时刻（手改复选框的情形）。
   final DateTime? doneAt;
 
-  /// 写在这一步上的备注——用户的"手写 log"挂在这里，不另存一份按天的日记。
+  /// 写在这一步上的备注——用户手写的几句话挂在这里，不另存一份。
   final String note;
 
   const MainlineStep({
@@ -58,115 +51,6 @@ class MainlineStep {
   String toString() => 'MainlineStep($title, done: $done, at: $doneAt)';
 }
 
-/// 一段记录 = 日历上圈出来的一段：**连续**日期 + 文字。段与段不重叠
-/// （写入撞段即拒绝，见 `docs/sockets/mainline.md`）。
-///
-/// 起止只到"天"，且自动归一：结束早于开始时对调（手改文件写反了也不丢）。
-class MainlineLog {
-  final DateTime start;
-  final DateTime end;
-
-  final String text;
-
-  const MainlineLog._({required this.start, required this.end, this.text = ''});
-
-  factory MainlineLog.range({
-    required DateTime start,
-    required DateTime end,
-    String text = '',
-  }) {
-    final a = dayOf(start);
-    final b = dayOf(end);
-    return a.isAfter(b)
-        ? MainlineLog._(start: b, end: a, text: text)
-        : MainlineLog._(start: a, end: b, text: text);
-  }
-
-  /// 这一段覆盖 [day] 吗（含两端）。
-  bool covers(DateTime day) {
-    final d = dayOf(day);
-    return !d.isBefore(start) && !d.isAfter(end);
-  }
-
-  /// 两段有没有共用一天（含两端，所以端点相接也算重叠）。
-  bool overlaps(MainlineLog other) =>
-      !end.isBefore(other.start) && !other.end.isBefore(start);
-
-  /// 覆盖的天数（至少 1）。
-  int get dayCount => end.difference(start).inDays + 1;
-
-  MainlineLog copyWith({DateTime? start, DateTime? end, String? text}) =>
-      MainlineLog.range(
-        start: start ?? this.start,
-        end: end ?? this.end,
-        text: text ?? this.text,
-      );
-
-  @override
-  String toString() => 'MainlineLog($start~$end, $text)';
-}
-
-/// 定位一段记录用的**身份**：起止日 + 当时的文字。
-///
-/// 命令通道不传下标。界面手里的下标是"按起始日排完序后的位置"，而 service 每条命令
-/// 都先重新读盘、再重新排序：中间若另一个引擎（悬浮面板）或人在 Obsidian 里加了一条
-/// 更早的圈，同一个下标就指到别人身上，改错和删错都不会报错。三元组是内容的证据，
-/// 落盘后按它找回原条目。
-class MainlineLogRef {
-  final DateTime start;
-  final DateTime end;
-  final String text;
-
-  const MainlineLogRef({
-    required this.start,
-    required this.end,
-    required this.text,
-  });
-
-  factory MainlineLogRef.of(MainlineLog log) => MainlineLogRef(
-        start: log.start,
-        end: log.end,
-        text: log.text,
-      );
-
-  /// 这段记录是不是它（起止按天比，文字逐字比）。
-  bool matches(MainlineLog log) =>
-      isSameDay(start, log.start) &&
-      isSameDay(end, log.end) &&
-      text == log.text;
-
-  @override
-  String toString() => 'MainlineLogRef($start~$end, $text)';
-}
-
-/// 月记：一个月一条文字（记录页切到"月视图"时写的那些）。
-///
-/// 与 [MainlineLog] 的分界线是**它不覆盖任何一天**：日历格子的小点、记录列表都不认
-/// 它，它只回答"这个月在干什么"。混进记录段里会让整月每一天都冒出同一句，
-/// 所以是独立的类型（`docs/decisions/2026-10-25-mainline-month-note.md`）。
-class MainlineMonthNote {
-  final int year;
-
-  /// 1–12。
-  final int month;
-
-  final String text;
-
-  const MainlineMonthNote({
-    required this.year,
-    required this.month,
-    required this.text,
-  });
-
-  bool isFor(int y, int m) => year == y && month == m;
-
-  MainlineMonthNote copyWith({String? text}) =>
-      MainlineMonthNote(year: year, month: month, text: text ?? this.text);
-
-  @override
-  String toString() => 'MainlineMonthNote($year-$month, $text)';
-}
-
 /// 一条主线。
 class Mainline {
   final String id;
@@ -181,8 +65,6 @@ class Mainline {
   final DateTime? abandonedAt;
 
   final List<MainlineStep> steps;
-  final List<MainlineLog> logs;
-  final List<MainlineMonthNote> months;
 
   Mainline({
     required this.id,
@@ -191,11 +73,7 @@ class Mainline {
     this.completedAt,
     this.abandonedAt,
     List<MainlineStep> steps = const [],
-    List<MainlineLog> logs = const [],
-    List<MainlineMonthNote> months = const [],
-  })  : steps = List.unmodifiable(steps),
-        logs = List.unmodifiable(logs),
-        months = List.unmodifiable(months);
+  }) : steps = List.unmodifiable(steps);
 
   /// 新建一条（[stepTitles] 可直接给几步空链）。
   factory Mainline.fresh({
@@ -246,36 +124,6 @@ class Mainline {
     return null;
   }
 
-  /// 记录按起始日升序（日历、归档列表都按这个顺序读）。
-  List<MainlineLog> get logsInOrder =>
-      [...logs]..sort((a, b) => a.start.compareTo(b.start));
-
-  /// 那个月的月记；没写过 → null。
-  MainlineMonthNote? monthNoteOf(int year, int month) {
-    for (final n in months) {
-      if (n.isFor(year, month)) return n;
-    }
-    return null;
-  }
-
-  /// 月记按年月升序。
-  List<MainlineMonthNote> get monthsInOrder => [...months]..sort((a, b) {
-        final byYear = a.year.compareTo(b.year);
-        return byYear != 0 ? byYear : a.month.compareTo(b.month);
-      });
-
-  /// 有就改、没有就加；[text] 去掉首尾空白后为空 = 删掉这个月那条。
-  ///
-  /// 一个月只留一条，所以"再写一次"就是改，不叠第二条。
-  List<MainlineMonthNote> withMonthNote(int year, int month, String text) {
-    final t = text.trim();
-    final next = [for (final n in months) if (!n.isFor(year, month)) n];
-    if (t.isNotEmpty) {
-      next.add(MainlineMonthNote(year: year, month: month, text: t));
-    }
-    return next;
-  }
-
   Mainline copyWith({
     String? title,
     DateTime? completedAt,
@@ -283,8 +131,6 @@ class Mainline {
     bool clearCompleted = false,
     bool clearAbandoned = false,
     List<MainlineStep>? steps,
-    List<MainlineLog>? logs,
-    List<MainlineMonthNote>? months,
   }) {
     return Mainline(
       id: id,
@@ -293,13 +139,10 @@ class Mainline {
       completedAt: clearCompleted ? null : (completedAt ?? this.completedAt),
       abandonedAt: clearAbandoned ? null : (abandonedAt ?? this.abandonedAt),
       steps: steps ?? this.steps,
-      logs: logs ?? this.logs,
-      months: months ?? this.months,
     );
   }
 
   @override
-  String toString() =>
-      'Mainline($id, $title, $progressText, ${logs.length} logs, '
-      '${months.length} month notes)';
+  String toString() => 'Mainline($id, $title, $progressText, '
+      '${steps.length} steps)';
 }

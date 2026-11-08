@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'application/branch_service.dart';
+import 'application/logbook_service.dart';
 import 'application/mainline_service.dart';
 import 'application/plan_service.dart';
 import 'application/routine_service.dart';
@@ -11,6 +12,7 @@ import 'application/task_service.dart';
 import 'domain/time_context.dart';
 import 'platform/app_adapters.dart';
 import 'repository/markdown_branch_repository.dart';
+import 'repository/markdown_logbook_repository.dart';
 import 'repository/markdown_mainline_repository.dart';
 import 'repository/markdown_plan_repository.dart';
 import 'repository/markdown_speednote_repository.dart';
@@ -88,6 +90,12 @@ Future<_OverlayCore> _assembleOverlayCore() async {
   );
   await mainlines.load();
 
+  // 记录册（panels/record.md）：同一份 `记录.md`，各持一个服务实例。它与主线各走各的，
+  // 所以不必等主线读成功。
+  final logBooks =
+      LogBookService(repo: MarkdownLogBookRepository(resolved.taskDir));
+  await logBooks.load();
+
   // 今日编排（§6.11）：同一份 `编排.md`，各持一个服务实例（写路径仍是
   // "读整份 → 改一天 → 整份写回"，两个引擎同时改按后写者胜）。
   final plans = PlanService(
@@ -118,6 +126,7 @@ Future<_OverlayCore> _assembleOverlayCore() async {
     taskDir: resolved.taskDir,
     routineService: routines,
     mainlineService: mainlines,
+    logBookService: logBooks,
     planService: plans,
     branchService: branches,
     speedNoteService: speedNotes,

@@ -5,15 +5,16 @@ import 'package:flutter/material.dart';
 import '../../domain/mainline.dart';
 import '../app_controller.dart';
 import '../theme.dart';
-import 'mainline_log_calendar.dart';
+import 'record_panel.dart';
 
 /// 主线覆盖页（ui-interaction.md §6.9）：**盖住整块侧边栏**（含面板头）。
 ///
-/// 两页横滑：第 1 页**行为链**、第 2 页**记录**（日历）。顶栏是唯一入口
-/// （`side_panel.dart` 的第二行），退出走左上返回 / 系统返回键。
+/// 两页横滑：第 1 页**行为链**、第 2 页**记录**（`record_panel.dart`；另一份数据，
+/// 与这条主线无关）。顶栏是唯一入口（`side_panel.dart` 的第二行），退出走左上返回 /
+/// 系统返回键。`1/2` 常驻——没有主线时第 1 页是空态，照样能翻到记录页。
 ///
 /// 分工：勾选是高频动作 → 靶在链的**节点**上；改名写备注是低频 → 靶在**文字**上。
-/// 归档必须显式点（全勾完才出现），归档后只读。
+/// 结束主线只有两种：勾完了是『完成』，没勾完是『废弃』（都显式点）；归档后只读。
 class MainlineOverlay extends StatefulWidget {
   final AppController controller;
   final VoidCallback onClose;
@@ -153,7 +154,8 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
               () => setState(() => _editing = false),
             ),
           ] else ...[
-            if (m != null && !_isReadingArchive)
+            // `1/2` 常驻：记录页与主线无关，没有主线时也要能翻过去。
+            if (!_isReadingArchive)
               Tooltip(
                 message: _page == 0 ? '翻到记录' : '翻回行为链',
                 child: InkWell(
@@ -179,13 +181,12 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
                 onPressed: () => setState(() => _viewingId = null),
                 child: const Text('返回当前'),
               ),
-            // 结束主线只有两种：勾完了是『完成』，没勾完是『废弃』。共用一个位置——
-            // 它回答的是"这条结束了没有"，不会同时需要两样。
+            // 结束主线只有两种：勾完了是『完成』，没勾完是『废弃』。『废弃』在进度行
+            // 右端（见 `_progressHeader`）——标题行在 240dp 上已经挤了返回 / 名字 /
+            // `1/2` / 铅笔。
             if (m != null && !_isReadingArchive && m.isAllDone)
               _iconButton(
                   Icons.check_circle_outline, '完成主线', () => _archive(m)),
-            if (m != null && !_isReadingArchive && !m.isAllDone)
-              _iconButton(Icons.block, '废弃主线', () => _abandon(m)),
           ],
         ],
       ),
@@ -208,26 +209,25 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
   // ---------- 主体 ----------
 
   Widget _body(ThemeData theme, Mainline? m) {
-    if (m == null) return _emptyState(theme);
-    if (_editing) return _editor(theme, m);
-    // 上滑退出只接两页里"内容到底之后"的一下（§6.9）：编辑态不接——那时页面
-    // 有自己的一套输入意图，收了会把没保存的东西一起推走。
+    // 编辑态是第 1 页的一种面貌：那一段有自己的一套输入意图，不接翻页，也不接
+    // 上滑退出（收了会把没保存的东西一起推走）。
+    if (m != null && _editing) return _editor(theme, m);
+    // 上滑退出只接两页里"内容到底之后"的一下（§6.9）。
     return NotificationListener<ScrollNotification>(
       onNotification: _onScroll,
       child: PageView(
         controller: _pages,
         // 记录页里横滑属于日历（拖选日期写一段记录），翻页交给页头那颗 `1/2`：
-        // 两套横滑抢同一个手势，谁都不肯让，只能按页分工。
-        physics: _page == 1
+        // 两套横滑抢同一个手势，谁都不肯让，只能按页分工。查看归档时不翻页——
+        // 那是一次回看，不是继续写的地方。
+        physics: (_page == 1 || _isReadingArchive)
             ? const NeverScrollableScrollPhysics()
             : const PageScrollPhysics(),
         onPageChanged: (i) => setState(() => _page = i),
         children: [
-          _chainPage(theme, m),
-          MainlineLogCalendar(
+          if (m == null) _emptyState(theme) else _chainPage(theme, m),
+          RecordPanel(
             controller: widget.controller,
-            mainline: m,
-            readOnly: !m.isActive,
             // 日历区域横滑归拖选日期，翻页落在下半区（记录列表 / 空提示）
             onSwipeBack: () => _pages.animateToPage(0,
                 duration: const Duration(milliseconds: 240),
@@ -268,36 +268,45 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
 
   Widget _emptyState(ThemeData theme) {
     final archived = widget.controller.archivedMainlines;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.route_outlined,
-                size: 40, color: AppColors.accent.withValues(alpha: 0.7)),
-            const SizedBox(height: 10),
-            Text('还没有主线', style: theme.textTheme.titleSmall),
-            const SizedBox(height: 4),
-            Text(
-              '一条主线 = 一串行为链 + 日历上的记录',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 14),
-            FilledButton(
-              onPressed: _createFlow,
-              child: const Text('新建主线'),
-            ),
-            if (archived.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              TextButton(
-                onPressed: _showArchive,
-                child: Text('归档 · ${archived.length} 条'),
+    // 不满一屏也要能 overscroll：空态也接覆盖页的上滑退出，否则这一页只剩『返回』一条路。
+    return LayoutBuilder(
+      builder: (context, box) => SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: box.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.route_outlined,
+                      size: 40, color: AppColors.accent.withValues(alpha: 0.7)),
+                  const SizedBox(height: 10),
+                  Text('还没有主线', style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 4),
+                  Text(
+                    '一条主线 = 一串行为链；记录在另一页，与它无关',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 14),
+                  FilledButton(
+                    onPressed: _createFlow,
+                    child: const Text('新建主线'),
+                  ),
+                  if (archived.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    TextButton(
+                      onPressed: _showArchive,
+                      child: Text('归档 · ${archived.length} 条'),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ],
+            ),
+          ),
         ),
       ),
     );
@@ -435,7 +444,11 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
                         color: theme.colorScheme.onSurfaceVariant)),
               ),
               const Spacer(),
-              if (m.isAllDone)
+              // 结束这条主线的入口就在这一行的右端：没勾完是『废弃』，勾完了那一位
+              // 让给『可归档』（完成动作在页底那颗大按钮与标题行那颗勾图标上）。
+              if (m.isActive && !m.isAllDone)
+                _abandonButton(theme, m)
+              else if (m.isActive)
                 Text('可归档',
                     style: theme.textTheme.labelSmall
                         ?.copyWith(color: AppColors.accent)),
@@ -453,6 +466,24 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 进度行右端的『废弃』：淡色文字按钮，不抢勾选的注意力——它回答"不做了"，
+  /// 不是这一页的主线动作；误触由后面的确认框兜住。
+  Widget _abandonButton(ThemeData theme, Mainline m) {
+    return TextButton.icon(
+      onPressed: () => _abandon(m),
+      icon: const Icon(Icons.block, size: 14),
+      label: const Text('废弃'),
+      style: TextButton.styleFrom(
+        foregroundColor: theme.colorScheme.onSurfaceVariant,
+        textStyle: theme.textTheme.labelMedium,
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        minimumSize: const Size(0, 28),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     );
   }
@@ -730,8 +761,8 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('完成这条主线？'),
-        content: const Text('归档后从顶栏撤下，整条（行为链 + 记录）留在 主线.md 里，'
-            '之后只能只读查看。'),
+        content: const Text('归档后从顶栏撤下，行为链留在 主线.md 里，'
+            '之后只能只读查看。记录是另一份数据，不受影响。'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -758,8 +789,8 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('废弃这条主线？'),
-        content: const Text('废弃后从顶栏撤下，整条（行为链 + 记录）留在 主线.md 里，'
-            '之后只能只读查看。它不会记成"已完成"，也不能恢复。'),
+        content: const Text('废弃后从顶栏撤下，行为链留在 主线.md 里，'
+            '之后只能只读查看。它不会记成"已完成"，也不能恢复；记录是另一份数据，不受影响。'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -928,71 +959,75 @@ class _StepRow extends StatelessWidget {
     final done = step.done;
     final muted = theme.colorScheme.onSurfaceVariant;
     final meta = _metaText();
-    return SizedBox(
-      height: 56,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 节点 = 勾选靶（高频动作给最小的靶）
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: readOnly ? null : onToggle,
-            child: SizedBox(
-              width: 30,
-              child: CustomPaint(
-                painter: _RailPainter(
-                  done: done,
-                  aboveDone: aboveDone,
-                  isNext: isNext,
-                  first: first,
-                  last: last,
-                  accent: AppColors.accent,
-                  line: theme.colorScheme.outlineVariant,
-                  surface: theme.scaffoldBackgroundColor,
+    return ConstrainedBox(
+      // 最短 56dp（单行标题的老样子），标题换行后行高跟着长；节点始终在第一行上。
+      constraints: const BoxConstraints(minHeight: 56),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 节点 = 勾选靶（高频动作给最小的靶）
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: readOnly ? null : onToggle,
+              child: SizedBox(
+                width: 30,
+                child: CustomPaint(
+                  painter: _RailPainter(
+                    done: done,
+                    aboveDone: aboveDone,
+                    isNext: isNext,
+                    first: first,
+                    last: last,
+                    accent: AppColors.accent,
+                    line: theme.colorScheme.outlineVariant,
+                    surface: theme.scaffoldBackgroundColor,
+                  ),
                 ),
               ),
             ),
-          ),
-          Expanded(
-            child: InkWell(
-              onTap: readOnly ? null : onOpen,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      step.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        height: 1.2,
-                        fontWeight: done
-                            ? null
-                            : (isNext ? FontWeight.w700 : FontWeight.w500),
-                        color: done ? muted : theme.colorScheme.onSurface,
-                        decoration: done ? TextDecoration.lineThrough : null,
-                        decorationColor: muted,
-                      ),
-                    ),
-                    if (meta.isNotEmpty) ...[
-                      const SizedBox(height: 2),
+            Expanded(
+              child: InkWell(
+                onTap: readOnly ? null : onOpen,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 8, 8, 8),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 标题过长就换行：最多 4 行，再长才省略（全文在点开的对话框里）。
                       Text(
-                        meta,
-                        maxLines: 1,
+                        step.title,
+                        maxLines: 4,
                         overflow: TextOverflow.ellipsis,
-                        style:
-                            theme.textTheme.labelSmall?.copyWith(color: muted),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          height: 1.2,
+                          fontWeight: done
+                              ? null
+                              : (isNext ? FontWeight.w700 : FontWeight.w500),
+                          color: done ? muted : theme.colorScheme.onSurface,
+                          decoration: done ? TextDecoration.lineThrough : null,
+                          decorationColor: muted,
+                        ),
                       ),
+                      if (meta.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          meta,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style:
+                              theme.textTheme.labelSmall?.copyWith(color: muted),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

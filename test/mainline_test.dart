@@ -4,7 +4,9 @@ import 'package:qixing/domain/mainline.dart';
 import 'package:qixing/repository/markdown_mainline_codec.dart';
 import 'package:qixing/repository/memory_mainline_repository.dart';
 
-/// 主线（§6.9 / 附录 B.6）：格式往返 + 命令语义。
+/// 主线（§6.9 / formats/mainline.md B.6）：格式往返 + 命令语义。
+///
+/// 记录与月记不在这份文件里，它们的测试在 `logbook_test.dart`。
 void main() {
   group('MarkdownMainlineCodec', () {
     const sample = '''---
@@ -19,14 +21,9 @@ owner: me
 - [ ] 列提纲
 - [x] 写第三章 完成 2026-10-19,21:30 备注：卡了两小时，后来用番茄钟推过去
 - [x] 通读一遍
-
-### 记录
-
-- 2026-10-19 ~ 2026-10-21 连续三天都在写第三章
-- 2026-10-23
 ''';
 
-    test('解析人工写的文件：步骤、完成时刻、备注、单日/跨日记录段', () {
+    test('解析人工写的文件：步骤、完成时刻、备注', () {
       final result = MarkdownMainlineCodec().decode(sample);
       expect(result.warnings, isEmpty);
       expect(result.mainlines, hasLength(1));
@@ -45,12 +42,6 @@ owner: me
       expect(m.doneSteps, 2);
       expect(m.isAllDone, isFalse);
       expect(m.nextStepIndex, 0);
-      expect(m.logs, hasLength(2));
-      expect(m.logs[0].start, DateTime(2026, 10, 19));
-      expect(m.logs[0].end, DateTime(2026, 10, 21));
-      expect(m.logs[0].dayCount, 3);
-      expect(m.logs[1].text, isEmpty);
-      expect(m.logs[1].dayCount, 1);
     });
 
     test('往返：未知 frontmatter 字段保留，正文按模型重写', () {
@@ -63,7 +54,36 @@ owner: me
       expect(again.title, first.title);
       expect(again.steps.length, first.steps.length);
       expect(again.steps[1].note, first.steps[1].note);
-      expect(again.logs[0].end, first.logs[0].end);
+    });
+
+    test('旧版的记录段与月记：不再读，读盘给一条告警，保存后消失', () {
+      const legacy = '''---
+id: ml-old
+title: 老文件
+created: 2026-10-01T09:00
+---
+
+### 行为链
+
+- [ ] 走一步
+
+### 记录
+
+- 2026-10-19 ~ 2026-10-21 三天都在写
+
+### 月记
+
+- 2026-10 十月在写第三章
+''';
+      final codec = MarkdownMainlineCodec();
+      final result = codec.decode(legacy);
+      expect(result.mainlines.single.steps.single.title, '走一步');
+      expect(result.warnings.single, contains('记录.md'));
+
+      final encoded = codec.encode(result.mainlines, originalRaw: legacy);
+      expect(encoded.contains('### 记录'), isFalse);
+      expect(encoded.contains('三天都在写'), isFalse);
+      expect(encoded.contains('### 月记'), isFalse);
     });
 
     test('归档：completed 有值、排序在跑的在前', () {
@@ -120,47 +140,6 @@ owner: me
       expect(m.archivedAt, DateTime(2026, 9, 20));
     });
 
-    test('月记：一条一行，手写重复行以后者为准，往返不丢', () {
-      const raw = '''---
-id: ml-m
-title: 论文
-created: 2026-10-01T09:00
----
-
-### 行为链
-
-- [ ] 列提纲
-
-### 记录
-
-- 2026-10-19 单天一条
-
-### 月记
-
-- 2026-10 这个月在写第三章
-- 2026-09 九月在找资料
-- 2026-10 十月改口了
-''';
-      final codec = MarkdownMainlineCodec();
-      final m = codec.decode(raw).mainlines.single;
-      expect(m.months, hasLength(2), reason: '同一个月只留一条');
-      expect(m.monthNoteOf(2026, 10)?.text, '十月改口了');
-      expect(m.monthsInOrder.map((n) => n.month), [9, 10]);
-      // 月记不落进记录段：它不覆盖任何一天
-      expect(m.logs, hasLength(1));
-
-      final encoded = codec.encode([m]);
-      expect(encoded, contains('### 月记'));
-      expect(encoded, contains('- 2026-10 十月改口了'));
-      expect(codec.decode(encoded).mainlines.single.months, hasLength(2));
-    });
-
-    test('没有月记：保存后不留 `### 月记` 空段', () {
-      final codec = MarkdownMainlineCodec();
-      final m = codec.decode(sample).mainlines.single;
-      expect(codec.encode([m]), isNot(contains('### 月记')));
-    });
-
     test('宽容：缺 id / 未闭合 frontmatter 不抛异常', () {
       final codec = MarkdownMainlineCodec();
       final result = codec.decode('''
@@ -177,21 +156,6 @@ title: 没闭合
 ''');
       expect(result.mainlines, isEmpty);
       expect(result.warnings, isNotEmpty);
-    });
-  });
-
-  group('MainlineLog', () {
-    test('含两端：端点相接算重叠，隔一天不算', () {
-      final a = MainlineLog.range(
-          start: DateTime(2026, 10, 2), end: DateTime(2026, 10, 5));
-      bool hit(int from, int to) => a.overlaps(MainlineLog.range(
-          start: DateTime(2026, 10, from), end: DateTime(2026, 10, to)));
-      expect(hit(5, 8), isTrue, reason: '端点相接共用一天');
-      expect(hit(6, 8), isFalse);
-      expect(hit(1, 1), isFalse);
-      expect(hit(1, 2), isTrue);
-      expect(hit(3, 4), isTrue, reason: '被包含');
-      expect(hit(1, 9), isTrue, reason: '整个包住');
     });
   });
 
@@ -285,156 +249,15 @@ title: 没闭合
       expect(after.steps[1].doneAt, DateTime(2026, 10, 21, 9));
     });
 
-    test('记录：加 / 改 / 删；起止写反自动对调', () async {
-      final svc = MainlineService(repo: MemoryMainlineRepository());
-      final m = await svc.create(title: '论文');
-      await svc.addLog(m.id,
-          start: DateTime(2026, 10, 21), end: DateTime(2026, 10, 19), text: '三天');
-      final log = svc.byId(m.id)!.logs.single;
-      expect(log.start, DateTime(2026, 10, 19));
-      expect(log.end, DateTime(2026, 10, 21));
-
-      await svc.updateLog(m.id, MainlineLogRef.of(log), text: '改过');
-      expect(svc.byId(m.id)!.logs.single.text, '改过');
-
-      await svc.removeLog(
-          m.id, MainlineLogRef.of(svc.byId(m.id)!.logs.single));
-      expect(svc.byId(m.id)!.logs, isEmpty);
-    });
-
-    test('记录段互不重叠：相交 / 被包含 / 端点相接都拒绝，且不落盘', () async {
-      final svc = MainlineService(repo: MemoryMainlineRepository());
-      final m = await svc.create(title: '论文');
-      await svc.addLog(m.id,
-          start: DateTime(2026, 10, 10),
-          end: DateTime(2026, 10, 15),
-          text: '写第三章');
-
-      Future<void> add(int from, int to) => svc.addLog(m.id,
-          start: DateTime(2026, 10, from),
-          end: DateTime(2026, 10, to),
-          text: '撞一段');
-
-      await expectLater(add(8, 11), throwsStateError);
-      await expectLater(add(12, 13), throwsStateError);
-      await expectLater(add(14, 20), throwsStateError);
-      await expectLater(add(15, 18), throwsStateError);
-      await expectLater(add(10, 15), throwsStateError);
-      expect(svc.byId(m.id)!.logs, hasLength(1), reason: '拒绝的不落盘');
-
-      await add(16, 18);
-      expect(svc.byId(m.id)!.logsInOrder.map((l) => l.text),
-          ['写第三章', '撞一段']);
-    });
-
-    test('起止写反按归一后的区间校验；删掉之后空档可再用', () async {
-      final svc = MainlineService(repo: MemoryMainlineRepository());
-      final m = await svc.create(title: '论文');
-      await svc.addLog(m.id,
-          start: DateTime(2026, 10, 10),
-          end: DateTime(2026, 10, 12),
-          text: 'A');
-      await expectLater(
-          svc.addLog(m.id,
-              start: DateTime(2026, 10, 13),
-              end: DateTime(2026, 10, 11),
-              text: 'B'),
-          throwsStateError);
-
-      await svc.removeLog(m.id, MainlineLogRef.of(svc.byId(m.id)!.logs.single));
-      await svc.addLog(m.id,
-          start: DateTime(2026, 10, 11), end: DateTime(2026, 10, 13), text: 'B');
-      expect(svc.byId(m.id)!.logs.single.text, 'B');
-    });
-
-    test('改记录：只改文字不验；改起止撞到别人拒绝，改到空档放行', () async {
-      final svc = MainlineService(repo: MemoryMainlineRepository());
-      final m = await svc.create(title: '论文');
-      await svc.addLog(m.id,
-          start: DateTime(2026, 10, 2), end: DateTime(2026, 10, 4), text: 'A');
-      await svc.addLog(m.id,
-          start: DateTime(2026, 10, 10), end: DateTime(2026, 10, 12), text: 'B');
-      final a = svc.byId(m.id)!.logs.firstWhere((l) => l.text == 'A');
-
-      await svc.updateLog(m.id, MainlineLogRef.of(a), text: 'A 改过');
-      final a2 = svc.byId(m.id)!.logs.firstWhere((l) => l.text == 'A 改过');
-      expect(a2.start, DateTime(2026, 10, 2));
-
-      await expectLater(
-          svc.updateLog(m.id, MainlineLogRef.of(a2),
-              start: DateTime(2026, 10, 11)),
-          throwsStateError);
-      expect(svc.byId(m.id)!.logs.firstWhere((l) => l.text == 'A 改过').start,
-          DateTime(2026, 10, 2),
-          reason: '拒绝的改动不落盘');
-
-      await svc.updateLog(m.id, MainlineLogRef.of(a2),
-          start: DateTime(2026, 10, 5), end: DateTime(2026, 10, 8));
-      final moved = svc.byId(m.id)!.logs.firstWhere((l) => l.text == 'A 改过');
-      expect(moved.start, DateTime(2026, 10, 5));
-      expect(moved.end, DateTime(2026, 10, 8));
-    });
-
-    test('记录按内容定位：另一份引擎插了一条更早的记录也不会改错', () async {
+    test('落盘 → 新实例读回（仓储是唯一事实来源）', () async {
       final repo = MemoryMainlineRepository();
-      final mine = MainlineService(repo: repo);
-      final m = await mine.create(title: '论文');
-      await mine.addLog(m.id,
-          start: DateTime(2026, 10, 19),
-          end: DateTime(2026, 10, 21),
-          text: '写第三章');
-      final ref = MainlineLogRef.of(mine.byId(m.id)!.logs.single);
-
-      // 另一个引擎（同一份盘）在这中间插了一条起始日更早的：排序后同一个下标
-      // 就不再指原来那条了。
-      final other = MainlineService(repo: repo);
-      await other.load();
-      await other.addLog(m.id,
-          start: DateTime(2026, 9, 1), end: DateTime(2026, 9, 2), text: '九月');
-
-      await mine.updateLog(m.id, ref, text: '改过');
-      final logs = mine.byId(m.id)!.logs;
-      expect(logs.firstWhere((l) => l.text == '改过').start,
-          DateTime(2026, 10, 19));
-      expect(logs.firstWhere((l) => l.text == '九月').start,
-          DateTime(2026, 9, 1),
-          reason: '别人那条不能动');
-      expect(logs.any((l) => l.text == '写第三章'), isFalse);
-
-      // 那条已经不在了：改要报错（不猜），删是幂等的（目的已达成）
-      await expectLater(
-          mine.updateLog(m.id, ref, text: '再来'), throwsStateError);
-      await mine.removeLog(m.id, ref);
-      expect(mine.byId(m.id)!.logs, hasLength(2));
-    });
-
-    test('月记：一个月一条，再写就是改；空文本删掉这条', () async {
-      final svc = MainlineService(repo: MemoryMainlineRepository());
-      final m = await svc.create(title: '论文');
-
-      await svc.setMonthNote(m.id, 2026, 10, '这个月在写第三章');
-      await svc.setMonthNote(m.id, 2026, 10, '改过');
-      expect(svc.byId(m.id)!.months, hasLength(1));
-      expect(svc.byId(m.id)!.monthNoteOf(2026, 10)!.text, '改过');
-
-      await svc.setMonthNote(m.id, 2026, 9, '九月在找资料');
-      expect(svc.byId(m.id)!.monthsInOrder.map((n) => n.month), [9, 10]);
-
-      await svc.setMonthNote(m.id, 2026, 10, '   ');
-      expect(svc.byId(m.id)!.months, hasLength(1));
-      expect(svc.byId(m.id)!.monthNoteOf(2026, 10), isNull);
-    });
-
-    test('落盘 → 新实例读回（仓储是唯一事实来源）', () async {      final repo = MemoryMainlineRepository();
       final one = MainlineService(repo: repo);
-      final m = await one.create(title: '论文', steps: ['a']);
-      await one.addLog(m.id,
-          start: DateTime(2026, 10, 19), end: DateTime(2026, 10, 20), text: '写');
+      await one.create(title: '论文', steps: ['a']);
 
       final two = MainlineService(repo: repo);
       await two.load();
       expect(two.active?.title, '论文');
-      expect(two.active?.logs.single.text, '写');
+      expect(two.active?.steps.single.title, 'a');
     });
 
     test('归档列表：完成与废弃混排，按归档时刻从新到旧', () async {
