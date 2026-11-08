@@ -19,7 +19,7 @@
 | [`architecture.md`](architecture.md) | 分层、接口、领域模型与调度语义、插座清单、import 矩阵、架构守卫、已知局限 | 结构、内核语义或接口变更 |
 | [`ui-interaction.md`](ui-interaction.md) | 入口、任务模型、创建流程、提醒系统、视觉、设置页、边界 | 交互需求变更 |
 | [`panels/`](panels/README.md) | 侧边栏每个页面各自的规则（把手、今日、灵感、池子、日历、已完成、快记、主线、编排、桌面） | 改某个页面的行为 |
-| [`formats/`](formats/README.md) | 持久化契约：`tasks.md` / `.gtd/` / `routines.md` / `主线.md` | 改数据格式 |
+| [`formats/`](formats/README.md) | 持久化契约：`tasks.md` / `.gtd/` / `routines.md` / `主线.md` / `记录.md` | 改数据格式 |
 | [`sockets/`](sockets/README.md) | 插座契约：每个插座的接口、适配器、引擎边界 | 加插座，或改某个插座的行为 |
 | [`decisions/`](decisions/README.md) | 决策卡片：为什么这么做、当时否了什么、代价 | 做了一个半年后可能被重新质疑的取舍 |
 | [`roadmap.md`](roadmap.md) | 未来方向：只差动手的、等触发条件的、已留插座未接的 | 想到新方向，或某个触发条件成立了 |

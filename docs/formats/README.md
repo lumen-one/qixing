@@ -10,10 +10,11 @@
 | B.2 内核属性文档 `.gtd/<任务id>.md` | [sidecar.md](sidecar.md) |
 | B.3 两条文档怎么对上号 · B.4 软删除 | [matching.md](matching.md) |
 | B.5 旧格式兼容与 `routines.md` | [routines.md](routines.md) |
-| B.6 `主线.md`（含月记） | [mainline.md](mainline.md) |
+| B.6 `主线.md`（主线 / 行为链） | [mainline.md](mainline.md) |
 | B.7 `编排.md`（今日编排的时间轴） | [plan.md](plan.md) |
 | B.8 `支线.md`（任务分组，条目是任务引用） | [branch.md](branch.md) |
 | B.9 `速记.md`（标签页便签） | [speednote.md](speednote.md) |
+| B.10 `记录.md`（日历上的记录段与月记） | [logbook.md](logbook.md) |
 
 
 ## B.0 目录布局
@@ -28,7 +29,8 @@ tasks/                       ← 任务目录（设置里可选，GTD_TASKS_DIR 
 │   │                        　内核属性扫描与文件监听都跳过它）
 │   └── .trash/              　软删除的内核属性文件（Obsidian 可见可捞）
 ├── routines.md              ← 周期规则（B.5）
-├── 主线.md                  ← 主线 / 行为链 / 记录 / 月记（B.6；应用维护整份）
+├── 主线.md                  ← 主线 / 行为链（B.6；应用维护整份）
+├── 记录.md                  ← 日历上的记录段与月记（B.10；应用维护整份）
 ├── 编排.md                  ← 今日编排的时间轴（B.7；应用维护整份）
 ├── 支线.md                  ← 任务分组，条目是任务引用（B.8；应用维护整份）
 ├── 速记.md                  ← 标签页便签，一条速记一个 frontmatter 块（B.9；应用维护整份）

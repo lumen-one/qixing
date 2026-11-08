@@ -71,6 +71,7 @@
 | [2026-11-06-mainline-log-no-overlap.md](2026-11-06-mainline-log-no-overlap.md) | 主线记录：段不重叠、文字常驻列表，日历只画色带 |
 | [2026-11-07-mainline-abandon.md](2026-11-07-mainline-abandon.md) | 主线：完成之外还有废弃归档，两类并排 |
 | [2026-11-07-mainline-record-decoupled.md](2026-11-07-mainline-record-decoupled.md) | 主线记录页只记人写的那一半，色带压在数字后面 |
+| [2026-11-08-record-book-independent.md](2026-11-08-record-book-independent.md) | 记录与主线分家：各住一个文件，记录页没有只读态 |
 
 待补（都是"会被重新质疑"的取舍，按需要慢慢写）：
 

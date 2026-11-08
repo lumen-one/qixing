@@ -23,7 +23,7 @@ abstract class SyncPort {
 + UDP 广播报站；从机 = 探询发现 → 连主机 → 双向搬文件；发现失败时支持手输 IP 兜底。
 
 **同步范围 = 核心任务数据与用户自己写的正文**：`tasks.md`、`routines.md`、`主线.md`、
-`编排.md`、`速记.md`、`.gtd/<任务id>.md`。
+`记录.md`、`编排.md`、`速记.md`、`.gtd/<任务id>.md`。
 **不同步**：`.gtd/log.md`（append-only，双写必乱序）、`.gtd/.trash/`（回收站是
 本地操作缓冲，不跨设备）、`.gtd/conflicts/`（冲突存档，本地人工收拾）、
 `settings.json`（设备相关：面板宽高 / 把手位置 / 主题档位）、`legacy-tasks/`（存档）。

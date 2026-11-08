@@ -140,10 +140,11 @@
 | `Task` | 任务事实：id、title、**created（= 人类文档的「创建」，由人类文档持有）**、**deadline（可空：fixed=时点 / flex=截止 / null=散件）**、**estimatedWork（可表达'长期'：三无缺省，标记而非分钟数；长期任务同时没有 remainingWork 与 importance）**、remainingWork、importance、status、snoozedUntil、description、**tags**、**completedAt**、**ringEnabled（metadata `remind`，这条提醒响不响铃）**、metadata；**不可变 + copyWith（由编译器强制写路径唯一）**；类型 TaskType 走 metadata 缓冲带 |
 | `TaskType` | flex（截止型）/ fixed（开始型）/ **routine（周期实例）**——三者的调度与完成语义不同 |
 | `Routine` | 周期规则：频率（每天/每周 X）、时点、响不响、启用开关；**不是任务**（住在 `routines.md`），每天生成一个当天实例（TaskType.routine） |
-| `Mainline` | 主线：当前在推进的一件大事（同时只有一条在跑）。行为链（`MainlineStep`）是它自己的步骤、**不是任务**；记录（`MainlineLog`）是一段连续日期 + 文字；月记（`MainlineMonthNote`）是一个月一条文字。住在 `tasks/主线.md`（[主线文件](formats/mainline.md)） |
+| `Mainline` | 主线：当前在推进的一件大事（同时只有一条在跑）。行为链（`MainlineStep`）是它自己的步骤、**不是任务**；它**只有行为链**——日历上的记录不住在这里。住在 `tasks/主线.md`（[主线文件](formats/mainline.md)） |
 | `MainlineStep` | 行为链的一步：标题、完成时刻（`doneAt`，null = 未完成）、写在这一步上的备注（手写 log 挂在这里） |
-| `MainlineLog` | 记录（日历上的"圈"）：起始日 + 结束日（含）+ 文字；可跨周，段与段不重叠（写入撞段即拒绝，见 [主线插座](sockets/mainline.md)） |
-| `MainlineMonthNote` | 月记：年月 + 一行文字，一个月最多一条；**不覆盖任何一天**，所以不进日历、不进记录列表（[记录页](panels/mainline.md)） |
+| `LogBook` | 记录册：全部记录段 + 全部月记，**独立于主线**——没有主线照写，归档主线也不影响它。住在 `tasks/记录.md`（[记录文件](formats/logbook.md)） |
+| `LogSegment` | 记录（日历上的"圈"）：起始日 + 结束日（含）+ 文字；可跨周，段与段不重叠（写入撞段即拒绝，见 [记录插座](sockets/logbook.md)） |
+| `MonthNote` | 月记：年月 + 一行文字，一个月最多一条；**不覆盖任何一天**，所以不进日历、不进记录列表（[记录页](panels/record.md)） |
 | `RoutineOccurrence` | 一次具体发生（规则 + 时刻）：任务池计划段插入与日历打点用 |
 | `TaskDocument` / `TaskLine` | 人类文档 `tasks.md` 的解析结果：整篇行数组 + 识别出的任务行（行号/小节/行指纹/人类那半边字段） |
 | `TaskStatus` | pending / active / snoozed / completed / **overdue（派生，不写入存储）**；只增不改 |
@@ -514,7 +515,8 @@ class MarkdownTaskRepository implements TaskRepository { /* … */ }
 | 座位 | 定义层 | 契约页 |
 |---|---|---|
 | 周期任务 | domain（`RoutineRepository` / `RoutineCodec`） | [routine.md](sockets/routine.md) |
-| 主线 | domain（`MainlineRepository` / `MainlineCodec`） | [mainline.md](sockets/mainline.md) |
+| 主线（行为链） | domain（`MainlineRepository` / `MainlineCodec`） | [mainline.md](sockets/mainline.md) |
+| 记录（日历上的圈与月记） | domain（`LogBookRepository` / `LogBookCodec`） | [logbook.md](sockets/logbook.md) |
 | 支线（任务分组） | domain（`BranchRepository` / `BranchCodec`） | [branch.md](sockets/branch.md) |
 | 灵感 / 设置 / 操作流水 | application（`NotesPort` / `SettingsPort` / `EventLogPort`） | [app-ports.md](sockets/app-ports.md) |
 | 今日与池子查询 | application（`buildTodayView` / `buildPoolView`） | [views.md](sockets/views.md) |
@@ -749,17 +751,18 @@ UI 仅经 AppController 访问，守卫规则 2 拦截回归。
 | **局域网同步的时钟与并发**              | 跨设备 mtime 只作同轮参考，方向主要靠内容指纹清单（见 [sockets/sync.md](sockets/sync.md)），时钟偏差不会导致反向覆盖，但可能让某一侧"永远显得更新"而每轮多推一次；两个从机同轮推同一文件按到达顺序覆盖（与"双开实例"同级）；`.trash` / `log.md` / `settings.json` 不跨设备——一台删的任务，另一台的回收站里没有，只能主机恢复                                                                                                                                                                                                                       | 出现真实并发丢写时（引入按文件的时间戳向量或单一写入者）；要求回收站也跨设备时（把 `.trash` 纳入同步范围并规定镜像删除的恢复路径）                          |
 | **桌面窄窗口不折叠侧边栏**               | Windows 窗口窄于 720 逻辑像素时退回单栏（只摆面板，设置页从标题栏按钮 push 成独立页）；再窄到约 480 以下，面板按 240dp 下限渲染、右侧留白被吃掉，不自动折叠成抽屉                                                                                                                                                                                                                                                                                     | 需要在很小的窗口里长期干活时（做可折叠栏 / 面板抽屉化）                                                                                                         |
 | **桌面鼠标按住横拖不翻页**               | `PageView` 在桌面上只接触摸 / 触控板 / 触控笔的拖动（Flutter 滚动视图默认的 dragDevices 不含 mouse）；翻页靠页序圆点或触控板横扫                                                                                                                                                                                                                                                                                                                     | 出现"鼠标拖不动页"的抱怨时（在桌面壳包一层放开 mouse 的 ScrollBehavior，注意别连带影响列表纵向滚动）                                                          |
-| **手工写出的重叠段不归应用管** | 命令通道拒绝重叠，应用写不出相交的记录段；增删改按内容定位（`MainlineLogRef`：起止日 + 原文，见 [主线插座](sockets/mainline.md)），人在 `主线.md` 里手写出的相交段或同起止同文字的两条认不出区别，命令落在第一条上，日历色带也会叠在一起。读盘不校验、不报警、不归并，文字照原样全列在记录列表里 | 出现真实的手工重叠案例时（加一条读盘告警，让人自己改文件）；或出现"两条相同文字的段要分别改"时（给记录加稳定尾巴，代价是文件里多一段人读起来没用的 id） |
+| **手工写出的重叠段不归应用管** | 命令通道拒绝重叠，应用写不出相交的记录段；增删改按内容定位（`LogSegmentRef`：起止日 + 原文，见 [记录插座](sockets/logbook.md)），人在 `记录.md` 里手写出的相交段或同起止同文字的两条认不出区别，命令落在第一条上，日历色带也会叠在一起。读盘不校验、不报警、不归并，文字照原样全列在记录列表里 | 出现真实的手工重叠案例时（加一条读盘告警，让人自己改文件）；或出现"两条相同文字的段要分别改"时（给记录加稳定尾巴，代价是文件里多一段人读起来没用的 id） |
 | **废弃的主线在老版本里会被当成在跑** | 归档判据从"`completed` 有值"扩成"`completed` 或 `abandoned` 有值"；老版本读到一条废弃主线时没有 `completed`，会把它当成正在跑的那一条，顶栏被它占住、新建不了。新版本读老文件不受影响（老文件里本来就没有废弃的主线） | 需要向下兼容时（把废弃也写进 `completed`，另加一个 `outcome` 字段，代价是"完成时刻"这个名字从此名不副实） |
+| **旧版 `主线.md` 里的记录段不再读** | 记录搬进 `记录.md` 之后，旧正文里的 `### 记录` / `### 月记` 两段既不解码也不迁移：下一次保存重写正文时它们一起消失，读盘只留一条告警。主线与记录因此在模型和文件两层都只剩一根线，代价是升级那一下要人自己搬一回 | 出现"升级后记录没了"的抱怨时（做一次性迁移：读旧段 → 写进 `记录.md` → 再删旧段，先写后删，中途断了最多重复、不会丢） |
 | **支线里的失效引用靠人收**               | 支线条目指向任务 id，任务被删之后那一行仍留在 `支线.md` 里（不自动清，怕吞掉另一个引擎还没写完的数据），界面上标灰显示成失效引用（[格式](formats/branch.md)）                                                                                                                                                                                                                                                                                             | 出现"失效行攒成一片没人管"的抱怨时（加一个"清掉全部失效行"的显式动作）                                                                                          |
 | **调度派生量在界面上没有出口** | 详情卡瘦成「标题 + 时间 + 备注」之后，时间裕度、下次该看的时刻、会不会响、提醒间隔这四个量在界面上看不到（列表行只留『裕度告急』一颗胶囊）。要查得看内核 sidecar，或临时把卡加回来 | 出现「想确认这件到底会不会响 / 下次什么时候提醒」的真实需求时（在长按菜单里加一项『调度详情』，别塞回点击路径） |
 | **编排提醒不补响** | 编排条目只在"到点那一刻"发一条静音消息：重启、重排、回前台都不补，过点即作废；同一分钟的多条只响一条。要让每条各响一次或过点补响，就得给条目落持久化的"已响"标记——`编排.md` 的每一行会变成有状态的行 | "排了却没提醒"成为主诉时（给条目加已响标记，或把编排并进任务模型） |
-| **支线不参与局域网同步**                 | 同步范围是 `tasks.md` / `routines.md` / `主线.md` / `编排.md` / `速记.md` / sidecar，`支线.md` 不在其中。任务本身同步，所以支线的引用不会碎，但"在这台分好组、那台看不到"（[同步契约](sockets/sync.md)）                                                                                                                                                                                               | 把 `支线.md` 纳入范围时（要定冲突规则：两边各改了同一段怎么办）                                                                                  |
+| **支线不参与局域网同步**                 | 同步范围是 `tasks.md` / `routines.md` / `主线.md` / `记录.md` / `编排.md` / `速记.md` / sidecar，`支线.md` 不在其中。任务本身同步，所以支线的引用不会碎，但"在这台分好组、那台看不到"（[同步契约](sockets/sync.md)）                                                                                                                                                                                               | 把 `支线.md` 纳入范围时（要定冲突规则：两边各改了同一段怎么办）                                                                                  |
 
 ---
 
 ## 附录 B：Markdown 文件格式约定（索引）
 
 正典见 [`formats/`](formats/README.md)：目录布局与"为什么双文档"、`tasks.md`、
-`.gtd/<id>.md`、配对与软删除、旧格式兼容与 `routines.md`、`主线.md` 六块。
+`.gtd/<id>.md`、配对与软删除、旧格式兼容与 `routines.md`、`主线.md`、`记录.md` 七块。
 改格式（字段、行语法、配对规则、迁移路径）先改那个目录，再改代码。
