@@ -1,6 +1,7 @@
 # deepseek-harness 文档管理策略研读笔记
 
-> 外部项目参考，**不是本项目现行口径**。本项目正文仍只有 README + architecture.md + ui-interaction.md 三份。
+> 外部项目参考，**不是本项目现行口径**。本目录说明见 [README.md](README.md)；这里针对
+> 本项目的建议未全部采纳，未采纳的不是待办。
 > 研读对象：`C:\Users\zzz\Desktop\workspace\deep harness\deepseek-harness`（读于 2026-10-21）。
 
 ## 一、这套体系在解决什么

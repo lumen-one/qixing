@@ -1,5 +1,7 @@
 # deepseek-harness 文档地图：每个文件夹装什么
 
+> 外部项目参考，不是本项目现行口径。本目录说明见 [README.md](README.md)。
+
 这份是**按目录查的导览**，配合 `deepseek-harness-doc-management.md`（讲规则为什么这么定）读。那份讲原理，这份讲位置。
 
 ## 0. 先记住一个前提
