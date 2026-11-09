@@ -1,7 +1,7 @@
 # 今日与池子查询
 
 `buildTodayView()` / `buildPoolView()` 是 UI 与调度结果之间唯一的接口：UI 只消费
-查询结果，不自己拼装。三种调度模式的差别全部在这两个函数的分支里。
+查询结果，不自己拼装。两档调度模式的差别全部在这两个函数的分支里。
 
 **今日视图查询 `buildTodayView()` / 任务池查询 `buildPoolView()`**（application 层）：
 聚合 ScheduleResult（截止型/逾期）+ 开始型组 + 例行实例 + 被挑散件 + 散件段
@@ -12,6 +12,7 @@
 （无序号者按 id 升序沉末尾），插队压顶那一层取消；另返回 `loose`（全部三无散件，
 按 `pool_order` → 创建时间排，页底 ⑥）。**标准档的成员不变**——都按提醒锚点
 筛"今天该看哪几件"（[今日清单页](../panels/today.md)）；
-`buildPoolView` 收 `hideLoose`（由装配点按 `scheduleMode.isManual` 传）：
-这一档不返回散件段，只留 `hiddenLooseCount` 给空状态文案；池子其余照旧是整理序
-（`pool_order`），周期条目按发生日期混排在任何一档都一样。
+`buildPoolView` 收 `splitLoose`（由装配点按 `scheduleMode.isManual` 传）：散件按
+metadata `loose_home` 分家——池子只收标了 `pool` 的，其余整段在今日页 ⑥，
+`hiddenLooseCount` 记搬走的那部分给空状态文案；池子里的散件仍按 `pool_order`，
+周期条目按发生日期混排，两档都一样。

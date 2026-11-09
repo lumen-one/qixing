@@ -58,11 +58,13 @@
 | [2026-10-24-android-markdown-pick.md](2026-10-24-android-markdown-pick.md) | 安卓挑灵感文件自己发 SAF：file_picker 只回缓存副本 |
 | [2026-10-24-calendar-add-and-done-dot.md](2026-10-24-calendar-add-and-done-dot.md) | 日历：长按某天加任务，干完的活留蓝点 |
 | [2026-10-24-create-date-first.md](2026-10-24-create-date-first.md) | 新建先问日期再填表单：日期不当默认值 |
+| [2026-10-25-branch.md](2026-10-25-branch.md) | 支线与编排共用一块覆盖页，数据各是各的 |
 | [2026-10-25-mainline-month-note.md](2026-10-25-mainline-month-note.md) | 月记单独一段：不把整月折成一条圈 |
 | [2026-10-28-calendar-three-dots.md](2026-10-28-calendar-three-dots.md) | 日历的点分三色：按类型配、按明度分三层 |
 | [2026-10-28-create-month-calendar.md](2026-10-28-create-month-calendar.md) | 新建第 1 页是月历：点某天即落定，时刻按类型取默认 |
-| [2026-10-28-mode-as-information-depth.md](2026-10-28-mode-as-information-depth.md) | 三档调度模式 = 信息深度的三个停靠点，界面按档裁剪、数据不留空白 |
+| [2026-10-28-mode-as-information-depth.md](2026-10-28-mode-as-information-depth.md) | 两档调度模式 = 信息深度的阶梯，界面按档裁剪、数据不留空白 |
 | [2026-10-28-tile-time-and-detail-slim.md](2026-10-28-tile-time-and-detail-slim.md) | 清单行右端只报时间，详情卡只留看 |
+| [2026-10-29-plan-reminder.md](2026-10-29-plan-reminder.md) | 编排条目到点发静音消息，不变成任务 |
 | [2026-10-31-plan-drag-aligns-time.md](2026-10-31-plan-drag-aligns-time.md) | 编排拖动 = 把时刻对齐到旁边那条 |
 | [2026-10-31-pool-plan-date-order.md](2026-10-31-pool-plan-date-order.md) | 任务池计划段按日期排，取消手动整理序 |
 | [2026-10-31-suspend-daily-habit.md](2026-10-31-suspend-daily-habit.md) | 挂起 = 长期散件的每日「今天做过」，次日自动回挂 |
