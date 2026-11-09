@@ -583,4 +583,217 @@ void main() {
     expect(find.text('废弃'), findsNothing);
     expect(find.text('1/2'), findsNothing);
   });
+
+  testWidgets('记录页：改日期走重圈，圈完回到框里、改过的字还在', (tester) async {
+    final now = DateTime.now();
+    final controller = makeController(
+      prefix: [
+        Mainline(
+          id: 'ml-7',
+          title: '写作',
+          created: DateTime(2026, 10, 1, 9),
+          steps: const [MainlineStep(title: '开头')],
+        ),
+      ],
+      segments: [
+        LogSegment.range(
+          start: DateTime(now.year, now.month, 11),
+          end: DateTime(now.year, now.month, 12),
+          text: '这一段在改稿',
+        ),
+      ],
+    );
+    await boot(tester, controller);
+    await pumpPanel(tester, controller);
+
+    await tester.tap(find.text('写作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1/2'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('这一段在改稿').last);
+    await tester.pumpAndSettle();
+    expect(find.text('改这一段'), findsOneWidget);
+
+    // 先在框里改了字，再去改日期：字要跟着走
+    await tester.enterText(find.byType(TextField).last, '改了一半的字');
+    await tester.tap(find.byTooltip('改日期'));
+    await tester.pumpAndSettle();
+
+    // 框收起、横幅升起
+    expect(find.text('改这一段'), findsNothing);
+    expect(find.text('拖选新的日期范围'), findsOneWidget);
+
+    await dragDays(tester, 15, 16);
+
+    // 圈完自动回到框里：新日期 + 刚才那半句
+    expect(find.text('改这一段'), findsOneWidget);
+    expect(find.text('改了一半的字'), findsOneWidget);
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    final seg = controller.logBook.segments.single;
+    expect(seg.start, DateTime(now.year, now.month, 15));
+    expect(seg.end, DateTime(now.year, now.month, 16));
+    expect(seg.text, '改了一半的字');
+    // 下半区跟着刷新
+    expect(find.text('改了一半的字'), findsOneWidget);
+  });
+
+  testWidgets('记录页：重圈时点单日 = 只改这一天', (tester) async {
+    final now = DateTime.now();
+    final controller = makeController(
+      prefix: [
+        Mainline(
+          id: 'ml-8',
+          title: '写作',
+          created: DateTime(2026, 10, 1, 9),
+          steps: const [MainlineStep(title: '开头')],
+        ),
+      ],
+      segments: [
+        LogSegment.range(
+          start: DateTime(now.year, now.month, 11),
+          end: DateTime(now.year, now.month, 12),
+          text: '两天',
+        ),
+      ],
+    );
+    await boot(tester, controller);
+    await pumpPanel(tester, controller);
+
+    await tester.tap(find.text('写作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1/2'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('两天').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('改日期'));
+    await tester.pumpAndSettle();
+
+    // 不拖、只点 20 号
+    await tester.tap(find.text('20'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('改这一段'), findsOneWidget);
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    final seg = controller.logBook.segments.single;
+    expect(seg.start, DateTime(now.year, now.month, 20));
+    expect(seg.end, DateTime(now.year, now.month, 20));
+    expect(seg.dayCount, 1);
+  });
+
+  testWidgets('记录页：重圈横幅上点取消 → 回到框里，日期不动', (tester) async {
+    final now = DateTime.now();
+    final controller = makeController(
+      prefix: [
+        Mainline(
+          id: 'ml-10',
+          title: '写作',
+          created: DateTime(2026, 10, 1, 9),
+          steps: const [MainlineStep(title: '开头')],
+        ),
+      ],
+      segments: [
+        LogSegment.range(
+          start: DateTime(now.year, now.month, 11),
+          end: DateTime(now.year, now.month, 12),
+          text: '别动日期',
+        ),
+      ],
+    );
+    await boot(tester, controller);
+    await pumpPanel(tester, controller);
+
+    await tester.tap(find.text('写作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1/2'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('别动日期').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('改日期'));
+    await tester.pumpAndSettle();
+    expect(find.text('拖选新的日期范围'), findsOneWidget);
+
+    // 横幅上那颗『取消』（框已经收起来了，页面上只剩这一颗）
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('拖选新的日期范围'), findsNothing);
+    expect(find.text('改这一段'), findsOneWidget);
+    // 框里那行字原样回来了（下半区那张卡上也有同一句，所以按输入框看）
+    expect(
+      tester.widget<TextField>(find.byType(TextField).last).controller!.text,
+      '别动日期',
+    );
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    final seg = controller.logBook.segments.single;
+    expect(seg.start, DateTime(now.year, now.month, 11));
+    expect(seg.end, DateTime(now.year, now.month, 12));
+  });
+
+  testWidgets('记录页：改日期撞上别的段 → 框不关，红字报撞到哪一段', (tester) async {
+    final now = DateTime.now();
+    final controller = makeController(
+      prefix: [
+        Mainline(
+          id: 'ml-9',
+          title: '写作',
+          created: DateTime(2026, 10, 1, 9),
+          steps: const [MainlineStep(title: '开头')],
+        ),
+      ],
+      segments: [
+        LogSegment.range(
+          start: DateTime(now.year, now.month, 11),
+          end: DateTime(now.year, now.month, 12),
+          text: '第一段',
+        ),
+        LogSegment.range(
+          start: DateTime(now.year, now.month, 15),
+          end: DateTime(now.year, now.month, 16),
+          text: '第二段',
+        ),
+      ],
+    );
+    await boot(tester, controller);
+    await pumpPanel(tester, controller);
+
+    await tester.tap(find.text('写作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1/2'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('第一段').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, '挪过去撞一下');
+    await tester.tap(find.byTooltip('改日期'));
+    await tester.pumpAndSettle();
+
+    await dragDays(tester, 15, 16);
+    expect(find.text('改这一段'), findsOneWidget);
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    // 框还在，红字说撞到「第二段」，文字没丢，盘上还是两段
+    expect(find.text('改这一段'), findsOneWidget);
+    expect(find.textContaining('重叠了'), findsOneWidget);
+    expect(find.textContaining('「第二段」'), findsOneWidget);
+    expect(find.text('挪过去撞一下'), findsOneWidget);
+    expect(controller.logBook.segments, hasLength(2));
+
+    // 取消出来，外面还是原来那两段
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(controller.logBook.segments, hasLength(2));
+  });
 }

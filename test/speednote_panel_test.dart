@@ -154,4 +154,66 @@ void main() {
     // 输入法连接已关：键盘不会留到别的页上去。
     expect(tester.testTextInput.hasAnyClients, isFalse);
   });
+
+  testWidgets('正文左右横滑切标签：左滑下一条、右滑回上一条', (tester) async {
+    final c = makeController(twoNotes());
+    await pumpOverlay(tester, c);
+
+    expect(find.text('第一项'), findsOneWidget);
+
+    await tester.drag(find.text('第一项'), const Offset(-160, 0));
+    await tester.pumpAndSettle();
+
+    expect(c.speedNoteTabId, 'b');
+    expect(find.text('第二条正文'), findsOneWidget);
+    expect(find.text('第一项'), findsNothing);
+
+    await tester.drag(find.text('第二条正文'), const Offset(160, 0));
+    await tester.pumpAndSettle();
+
+    expect(c.speedNoteTabId, 'a');
+    expect(find.text('第一项'), findsOneWidget);
+  });
+
+  testWidgets('横滑到头：第一条再向右滑，不动并说一声', (tester) async {
+    final c = makeController(twoNotes());
+    await pumpOverlay(tester, c);
+
+    await tester.drag(find.text('第一项'), const Offset(160, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已经是第一条'), findsOneWidget);
+    expect(c.speedNoteTabId, 'a');
+    expect(find.text('第一项'), findsOneWidget);
+  });
+
+  testWidgets('横滑到头：最后一条再向左滑，不动并说一声', (tester) async {
+    final c = makeController(twoNotes());
+    await pumpOverlay(tester, c);
+
+    await tester.tap(find.text('乙'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.text('第二条正文'), const Offset(-160, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已经是最后一条'), findsOneWidget);
+    expect(c.speedNoteTabId, 'b');
+    expect(find.text('第二条正文'), findsOneWidget);
+  });
+
+  testWidgets('编辑态不接横滑：那里的横向拖动是移光标', (tester) async {
+    final c = makeController(twoNotes());
+    await pumpOverlay(tester, c);
+
+    await tester.tap(find.byTooltip('编辑'));
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(TextField), const Offset(-160, 0));
+    await tester.pumpAndSettle();
+
+    // 没换条，也没退出编辑态
+    expect(c.speedNoteTabId, 'a');
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.byTooltip('完成'), findsOneWidget);
+  });
 }

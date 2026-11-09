@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -21,6 +22,9 @@ const List<String> _weekLabels = ['一', '二', '三', '四', '五', '六', '日
 /// - 下半区**不依赖选中日**，进来就常驻列出与本月相交的全部记录段，每段一张卡
 ///   （完整正文 + 起止日期与天数）。点某一天只滚到覆盖它的卡并双向高亮，
 ///   点卡片才进改文字 / 删除的对话框；
+/// - **改日期靠重圈**：对话框里日期那行右端一颗入口，点了收起对话框、日历上方冒一行
+///   『拖选新的日期范围』，重新拖一次就回到对话框（文字保住）。日历格子自己不接
+///   "拖动改期"——格子上拖一下到底是新建还是改，猜不出来；
 /// - 月头那行年月是视图开关：点它把上半区换成这一年的十二行月记，再点切回日历。
 ///   月记不覆盖任何一天，所以它不进格子、也不进记录列表
 ///   （`docs/decisions/2026-10-25-mainline-month-note.md`）。
@@ -58,8 +62,22 @@ class _RecordPanelState extends State<RecordPanel> {
   bool _dragging = false;
   Offset? _downAt;
 
+  /// 重圈模式：非空时，日历上的下一次**拖动或点按**是给这一段换日期，不是新建。
+  ///
+  /// 用 Completer 把"等用户圈完"这件事挂在页面上：对话框已经收起，圈完（或取消）
+  /// 才把它叫醒。同一时刻只允许一个。
+  Completer<(DateTime, DateTime)?>? _rangePick;
+
   /// 整本记录册里的记录段（按起始日升序）；这一页只读它。
   List<LogSegment> get _segments => widget.controller.logBook.segmentsInOrder;
+
+  @override
+  void dispose() {
+    // 页面先走、圈还挂着：把等待叫醒，否则对话框那条线永远等着。
+    final pending = _rangePick;
+    if (pending != null && !pending.isCompleted) pending.complete(null);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -67,6 +85,7 @@ class _RecordPanelState extends State<RecordPanel> {
     return Column(
       children: [
         _monthHeader(theme),
+        if (_rangePick != null) _rangePickBanner(theme),
         if (_monthView)
           // 月记没有日历可拖，整块列表让给"右滑回行为链"那条手势。
           Expanded(child: _swipeBackLayer(_buildMonthList(theme)))
@@ -125,7 +144,10 @@ class _RecordPanelState extends State<RecordPanel> {
             child: Tooltip(
               message: _monthView ? '回月历' : '按月记',
               child: InkWell(
-                onTap: () => setState(() => _monthView = !_monthView),
+                // 重圈时不能换成月记列表：那半边没有格子可拖，人就被困在横幅里了。
+                onTap: _rangePick != null
+                    ? null
+                    : () => setState(() => _monthView = !_monthView),
                 borderRadius: BorderRadius.circular(8),
                 child: Padding(
                   padding:
@@ -182,6 +204,79 @@ class _RecordPanelState extends State<RecordPanel> {
         ),
       );
 
+  // ---------- 重圈（改日期） ----------
+
+  /// 等着"在日历上重新拖一次"的那一行。横幅本身就是当前模式的全部提示：
+  /// 日历照旧画着色带，拖选高亮照旧跟手，用户不用学第二套手势。
+  Widget _rangePickBanner(ThemeData theme) {
+    final accent = AppColors.accent;
+    return Container(
+      height: 28,
+      margin: const EdgeInsets.fromLTRB(8, 0, 8, 2),
+      padding: const EdgeInsets.only(left: 8, right: 2),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.touch_app_outlined, size: 14, color: accent),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '拖选新的日期范围',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall?.copyWith(color: accent),
+            ),
+          ),
+          TextButton(
+            onPressed: _cancelRangePick,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 24),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
+            child: const Text('取消', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 挂起一次重圈：返回 (新起, 新止)，点『取消』就是 null。
+  ///
+  /// 返回的 future 一定等到横幅收起来之后才完成（`whenComplete` 排在前面），
+  /// 所以调用方拿到结果时页面已经回到平常的样子。
+  Future<(DateTime, DateTime)?> _pickRange() {
+    final running = _rangePick;
+    if (running != null) return running.future;
+    final pending = Completer<(DateTime, DateTime)?>();
+    setState(() {
+      _rangePick = pending;
+      // 月记列表上没有格子可拖：从那里点进来的先切回月历。
+      _monthView = false;
+      _selected = null;
+    });
+    return pending.future.whenComplete(() {
+      if (!mounted) return;
+      setState(() => _rangePick = null);
+    });
+  }
+
+  void _completeRangePick(DateTime a, DateTime b) {
+    final pending = _rangePick;
+    if (pending == null || pending.isCompleted) return;
+    pending.complete(a.isBefore(b) ? (a, b) : (b, a));
+  }
+
+  void _cancelRangePick() {
+    final pending = _rangePick;
+    if (pending == null || pending.isCompleted) return;
+    pending.complete(null);
+  }
+
   Widget _weekdayRow(ThemeData theme) => Row(
         children: [
           for (final w in _weekLabels)
@@ -237,12 +332,22 @@ class _RecordPanelState extends State<RecordPanel> {
           final start = anchor.isBefore(cursor) ? anchor : cursor;
           final end = anchor.isBefore(cursor) ? cursor : anchor;
           setState(() {});
+          if (_rangePick != null) {
+            _completeRangePick(start, end);
+            return;
+          }
           _promptNewLog(start: start, end: end);
           return;
         }
-        // 没拖 = 点：只选中那天（滚到覆盖它的卡片并高亮），文字本来就在下面。
+        // 没拖 = 点：重圈时"这一天"就是新范围（一天也算一段），平常只选中那天
+        // （滚到覆盖它的卡片并高亮），文字本来就在下面。
         final day = layout.dayAt(e.localPosition);
-        if (day != null) _selectDay(day);
+        if (day == null) return;
+        if (_rangePick != null) {
+          _completeRangePick(day, day);
+          return;
+        }
+        _selectDay(day);
       },
       onPointerCancel: (_) {
         _dragAnchor = null;
@@ -529,7 +634,8 @@ class _RecordPanelState extends State<RecordPanel> {
       key: GlobalObjectKey('log-card-$index'),
       padding: const EdgeInsets.only(bottom: 6),
       child: InkWell(
-        onTap: () => _promptEditLog(log),
+        // 重圈时下面这摞卡不接点击：这时候点开另一段，两个对话框会抢同一圈日期。
+        onTap: _rangePick != null ? null : () => _promptEditLog(log),
         borderRadius: BorderRadius.circular(8),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
@@ -587,38 +693,66 @@ class _RecordPanelState extends State<RecordPanel> {
     required DateTime start,
     required DateTime end,
   }) async {
-    final outcome = await _textDialog(
+    await _textDialog(
       title: '这一段记点什么',
-      subtitle: _rangeText(start, end),
       initial: '',
+      start: start,
+      end: end,
+      onSave: (text) async {
+        try {
+          await widget.controller.addLog(start: start, end: end, text: text);
+          return null;
+        } on StateError catch (e) {
+          return _errorText(e);
+        }
+      },
     );
-    if (outcome == null) return;
-    try {
-      await widget.controller.addLog(start: start, end: end, text: outcome.text);
-    } on StateError catch (e) {
-      _toast(_errorText(e));
-    }
   }
 
+  /// 改一段：文字、日期都在同一张框里改。
+  ///
+  /// 『改日期』走重圈：对话框先收起，日历上重新拖一次再回来。一轮没弄好（撞了
+  /// 别的段、或者又想换一天）就接着来；`ref` 始终是**打开那一刻**的身份——这期间
+  /// 别处把它改了或删了，命令会找不到它并明确报错，而不是按下标改到另一条上。
   Future<void> _promptEditLog(LogSegment log) async {
-    final outcome = await _textDialog(
-      title: '改这一段',
-      subtitle: _rangeText(log.start, log.end),
-      initial: log.text,
-      allowDelete: true,
-    );
-    if (outcome == null) return;
-    // 身份取"打开对话框那一刻"的样子：这期间别处把它改了或删了，命令就找不到它、
-    // 明确报错——而不是按下标改到另一条上。
     final ref = LogSegmentRef.of(log);
-    try {
-      if (outcome.deleted) {
-        await widget.controller.removeLog(ref);
-        return;
-      }
-      await widget.controller.updateLog(ref, text: outcome.text);
-    } on StateError catch (e) {
-      _toast(_errorText(e));
+    var start = log.start;
+    var end = log.end;
+    var text = log.text;
+
+    while (true) {
+      // 每一轮都是一张新框：这一轮的闭包要钉住这一轮的日期。
+      final from = start;
+      final to = end;
+      final outcome = await _textDialog(
+        title: '改这一段',
+        initial: text,
+        start: from,
+        end: to,
+        pickRange: true,
+        onSave: (t) async {
+          try {
+            await widget.controller
+                .updateLog(ref, start: from, end: to, text: t);
+            return null;
+          } on StateError catch (e) {
+            return _errorText(e);
+          }
+        },
+        onDelete: () async {
+          await widget.controller.removeLog(ref);
+          return null;
+        },
+      );
+      if (outcome == null || !outcome.wantsRange) return;
+
+      // 收起框的时候里面可能有还没存的字：带去重圈，圈完原样回到框里。
+      text = outcome.draftText!;
+      final range = await _pickRange();
+      if (!mounted) return;
+      if (range == null) continue; // 横幅上点了取消：回对话框，日期不动
+      start = range.$1;
+      end = range.$2;
     }
   }
 
@@ -629,95 +763,253 @@ class _RecordPanelState extends State<RecordPanel> {
     return s.startsWith(prefix) ? s.substring(prefix.length) : s;
   }
 
-  void _toast(String message) {
-    ScaffoldMessenger.maybeOf(context)
-        ?.showSnackBar(SnackBar(content: Text(message)));
-  }
-
   /// 写 / 改某个月的月记：一个月只留一条，有字才给删除。
   Future<void> _promptMonthNote(int year, int month) async {
     final existing =
         widget.controller.logBook.monthNoteOf(year, month)?.text ?? '';
-    final outcome = await _textDialog(
+    await _textDialog(
       title: '$year 年 $month 月',
       subtitle: '一个月写一句：这个月在做什么',
       initial: existing,
-      allowDelete: existing.isNotEmpty,
+      onSave: (text) async {
+        await widget.controller.setMonthNote(year, month, text);
+        return null;
+      },
+      onDelete: existing.isEmpty
+          ? null
+          : () async {
+              await widget.controller.setMonthNote(year, month, '');
+              return null;
+            },
       // 不写例句：上面那行 subtitle 已经说明这个框里写什么，框里再来一行灰字是同一句
       // 话的第二次，还占掉一行高。
       hint: null,
       minLines: 1,
     );
-    if (outcome == null) return;
-    await widget.controller
-        .setMonthNote(year, month, outcome.deleted ? '' : outcome.text);
   }
 
+  /// 记录段 / 月记共用的那张输入框。
+  ///
+  /// **保存由对话框自己执行**：`onSave` 回一句错误文案时框不关、就地红字。改日期
+  /// 挪出范围撞上别人是常事，先关框再弹 toast 会把刚敲的字一起丢掉。
   Future<_LogOutcome?> _textDialog({
     required String title,
-    required String subtitle,
     required String initial,
-    bool allowDelete = false,
+    required Future<String?> Function(String text) onSave,
+    String? subtitle,
+    DateTime? start,
+    DateTime? end,
+    bool pickRange = false,
+    Future<String?> Function()? onDelete,
     String? hint = '这段时间在做什么',
     int minLines = 2,
-  }) async {
-    final ctrl = TextEditingController(text: initial);
-    final result = await showDialog<_LogOutcome>(
+  }) {
+    return showDialog<_LogOutcome>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Column(
+      builder: (_) => _LogTextDialog(
+        title: title,
+        subtitle: subtitle,
+        start: start,
+        end: end,
+        pickRange: pickRange,
+        initial: initial,
+        onSave: onSave,
+        onDelete: onDelete,
+        hint: hint,
+        minLines: minLines,
+      ),
+    );
+  }
+}
+
+/// 对话框的出口。`null`（pop 空值）= 取消。
+class _LogOutcome {
+  /// 保存 / 删除已经落盘，外面不用再做任何事。
+  const _LogOutcome.done() : draftText = null;
+
+  /// 要去日历上重圈：把这行草稿带出去，圈完重开框。
+  const _LogOutcome.range(this.draftText);
+
+  /// `done` 时为 null。
+  final String? draftText;
+
+  bool get wantsRange => draftText != null;
+}
+
+/// 一段记录的输入框：日期行（可选，带『改日期』）、正文、删除 / 取消 / 保存。
+///
+/// 单独做成 StatefulWidget 有两个原因：controller 得跟着框一起销毁；保存失败时
+/// 要留在原地显示错误——让 `showDialog` 先关再重开会闪一下，键盘也跟着抖。
+class _LogTextDialog extends StatefulWidget {
+  final String title;
+  final String? subtitle;
+  final DateTime? start;
+  final DateTime? end;
+
+  /// 日期行右端给不给『改日期』（只有记录段给；月记没有范围可改）。
+  final bool pickRange;
+  final String initial;
+  final String? hint;
+  final int minLines;
+
+  /// 返回给用户看的错误文案；null = 已落盘，可以关框。
+  final Future<String?> Function(String text) onSave;
+
+  /// 非空才画『删除』。
+  final Future<String?> Function()? onDelete;
+
+  const _LogTextDialog({
+    required this.title,
+    required this.initial,
+    required this.onSave,
+    this.subtitle,
+    this.start,
+    this.end,
+    this.pickRange = false,
+    this.onDelete,
+    this.hint,
+    this.minLines = 2,
+  });
+
+  @override
+  State<_LogTextDialog> createState() => _LogTextDialogState();
+}
+
+class _LogTextDialogState extends State<_LogTextDialog> {
+  late final _ctrl = TextEditingController(text: widget.initial);
+
+  /// 保存 / 删除进行中：按钮先按住，避免连点落两条。
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(Future<String?> Function() op) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final error = await op();
+    if (!mounted) return;
+    if (error != null) {
+      setState(() {
+        _busy = false;
+        _error = error;
+      });
+      return;
+    }
+    Navigator.of(context).pop(const _LogOutcome.done());
+  }
+
+  /// 收起这张框，把框里这行字交给外面去重圈。**不保存**：日期还没定。
+  void _pickRange() {
+    // 退场动画那一百多毫秒里框还在树上，连点第二下会把下面那条路由一起弹掉。
+    if (_busy) return;
+    _busy = true;
+    Navigator.of(context).pop(_LogOutcome.range(_ctrl.text.trim()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    final start = widget.start;
+    final end = widget.end;
+    return AlertDialog(
+      title: Text(widget.title),
+      // 撞车那行红字可能很长（带着对家的正文），窄面板上再叠多行正文就容易溢出；
+      // 这里让内容自己滚，框高不跟着内容长。
+      content: SingleChildScrollView(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(subtitle,
-                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
+            if (start != null && end != null)
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _rangeText(start, end),
+                      style: theme.textTheme.bodySmall?.copyWith(color: muted),
+                    ),
+                  ),
+                  if (widget.pickRange)
+                    Tooltip(
+                      message: '改日期',
+                      child: SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: IconButton(
+                          padding: EdgeInsets.zero,
+                          iconSize: 16,
+                          visualDensity: VisualDensity.compact,
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size(28, 28),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          icon: const Icon(Icons.edit_calendar_outlined),
+                          onPressed: _pickRange,
+                        ),
+                      ),
+                    ),
+                ],
+              )
+            else if (widget.subtitle != null)
+              Text(widget.subtitle!,
+                  style: theme.textTheme.bodySmall?.copyWith(color: muted)),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.error)),
+            ],
             const SizedBox(height: 8),
             TextField(
-              controller: ctrl,
+              controller: _ctrl,
               autofocus: true,
-              minLines: minLines,
+              minLines: widget.minLines,
               maxLines: 4,
               decoration: InputDecoration(
-                hintText: hint,
+                hintText: widget.hint,
                 border: const OutlineInputBorder(),
               ),
             ),
           ],
         ),
-        actions: [
-          if (allowDelete)
-            TextButton(
-              onPressed: () =>
-                  Navigator.of(ctx).pop(const _LogOutcome(deleted: true)),
-              child: const Text('删除'),
-            ),
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('取消')),
-          FilledButton(
-            onPressed: () =>
-                Navigator.of(ctx).pop(_LogOutcome(text: ctrl.text.trim())),
-            child: const Text('保存'),
-          ),
-        ],
       ),
+      actions: [
+        if (widget.onDelete != null)
+          TextButton(
+            onPressed: _busy ? null : () => _run(widget.onDelete!),
+            child: const Text('删除'),
+          ),
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed:
+              _busy ? null : () => _run(() => widget.onSave(_ctrl.text.trim())),
+          child: const Text('保存'),
+        ),
+      ],
     );
-    return result;
   }
-
-  static String _rangeText(DateTime a, DateTime b) => isSameDay(a, b)
-      ? '${a.year} 年 ${a.month} 月 ${a.day} 日'
-      : '${a.year} 年 ${a.month} 月 ${a.day} 日 ~ '
-          '${b.month} 月 ${b.day} 日（${b.difference(a).inDays + 1} 天）';
 }
 
-class _LogOutcome {
-  final String text;
-  final bool deleted;
-
-  const _LogOutcome({this.text = '', this.deleted = false});
+/// 起止日期那行小字。跨年时末尾补上年份，否则「11 月 1 日 ~ 1 月 3 日」看着像倒序。
+String _rangeText(DateTime a, DateTime b) {
+  if (isSameDay(a, b)) return '${a.year} 年 ${a.month} 月 ${a.day} 日';
+  final tail = a.year == b.year
+      ? '${b.month} 月 ${b.day} 日'
+      : '${b.year} 年 ${b.month} 月 ${b.day} 日';
+  return '${a.year} 年 ${a.month} 月 ${a.day} 日 ~ $tail'
+      '（${b.difference(a).inDays + 1} 天）';
 }
 
 // ---------- 几何 ----------

@@ -48,6 +48,12 @@ class _SpeedNoteOverlayState extends State<SpeedNoteOverlay> {
   /// 目录条跳转要用的锚点，一个标题一个。
   final Map<int, GlobalKey> _headingKeys = {};
 
+  /// 标签栏每一颗的锚点：横滑切到视野外的那条时，把它滚进来。
+  final Map<String, GlobalKey> _tabKeys = {};
+
+  /// 横向拖动累计的位移（松手时按它和速度判方向）。
+  double _swipeDx = 0;
+
   bool _editing = false;
 
   /// 输入框里这段字属于哪一条速记。与当前标签不一致 = 还没对齐，别拿它写盘。
@@ -117,8 +123,43 @@ class _SpeedNoteOverlayState extends State<SpeedNoteOverlay> {
       _flash = null;
     });
     _c.selectSpeedNote(id);
+    _revealTab(id);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _scroll.hasClients) _scroll.jumpTo(0);
+    });
+  }
+
+  /// 横滑翻一条：到头就停住并说一声，免得被当成手势没生效。
+  Future<void> _stepNote(int delta) async {
+    final notes = _c.speedNotes;
+    // 只有一条时两头都是尽头，提示只会让人更糊。
+    if (notes.length < 2) return;
+    final i = notes.indexWhere((n) => n.id == _note?.id);
+    if (i < 0) return;
+    final j = i + delta;
+    if (j < 0) {
+      _toast('已经是第一条');
+      return;
+    }
+    if (j >= notes.length) {
+      _toast('已经是最后一条');
+      return;
+    }
+    await _select(notes[j].id);
+  }
+
+  /// 把当前标签滚进视线：横滑过去的那条可能在标签栏外面。点标签进来的本来就在
+  /// 视野里，`ensureVisible` 不会动，所以两条路都走这一处。
+  void _revealTab(String id) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _tabKeys[id]?.currentContext;
+      if (ctx == null || !ctx.mounted) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        alignment: 0.5,
+      );
     });
   }
 
@@ -146,6 +187,7 @@ class _SpeedNoteOverlayState extends State<SpeedNoteOverlay> {
     if (_editorNoteId == note.id) setState(() => _editing = false);
     await _c.removeSpeedNote(note.id);
     if (!mounted) return;
+    _tabKeys.remove(note.id);
     _headingKeys.clear();
     _collapsed.clear();
     setState(() => _flash = null);
@@ -379,7 +421,9 @@ class _SpeedNoteOverlayState extends State<SpeedNoteOverlay> {
               Expanded(
                 child: note == null
                     ? _empty(theme)
-                    : (_editing ? _editor(theme) : _viewer(theme, note)),
+                    : (_editing
+                        ? _editor(theme)
+                        : _swipeNotes(_viewer(theme, note))),
               ),
             ],
           ),
@@ -468,6 +512,8 @@ class _SpeedNoteOverlayState extends State<SpeedNoteOverlay> {
           final n = notes[i];
           final active = current?.id == n.id;
           return GestureDetector(
+            // 锚点按 id 存：横滑切到视野外的那条时要把它滚进来。
+            key: _tabKeys.putIfAbsent(n.id, () => GlobalKey()),
             onTap: () => unawaited(_select(n.id)),
             onLongPress: () => unawaited(_renameTab(n)),
             child: AnimatedContainer(
@@ -592,6 +638,31 @@ class _SpeedNoteOverlayState extends State<SpeedNoteOverlay> {
       );
 
   // ------------------------------------------------------------ 展示态
+
+  /// 正文区左右横滑 = 切上一条 / 下一条。
+  ///
+  /// **只包展示态**：编辑态里横向拖动是移光标、选字，抢走就写不了字了。标签栏与
+  /// 目录条是两条自己会滚的横向列表，也不经过这里。纵向滚动与它正交，互不抢手。
+  Widget _swipeNotes(Widget child) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragStart: (_) => _swipeDx = 0,
+      onHorizontalDragUpdate: (d) => _swipeDx += d.delta.dx,
+      onHorizontalDragCancel: () => _swipeDx = 0,
+      onHorizontalDragEnd: (d) {
+        final dx = _swipeDx;
+        final v = d.primaryVelocity ?? 0;
+        _swipeDx = 0;
+        // 与记录页翻页同一个判据：走过 48dp 或快甩就算数。
+        if (dx < -48 || v < -500) {
+          unawaited(_stepNote(1));
+        } else if (dx > 48 || v > 500) {
+          unawaited(_stepNote(-1));
+        }
+      },
+      child: child,
+    );
+  }
 
   Widget _viewer(ThemeData theme, SpeedNote note) {
     final lines = note.body.split('\n');
