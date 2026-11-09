@@ -32,12 +32,19 @@ class LintProblem {
 }
 
 class DocLint {
-  DocLint({required String root, FileExists? exists})
-      : root = normalizePath(root),
+  DocLint({
+    required String root,
+    FileExists? exists,
+    this.enforceCrlf = false,
+  })  : root = normalizePath(root),
         _exists = exists ?? _diskExists;
 
   /// 仓库根，已归一化（`/` 分隔，无 `.` 与多余 `..`）。
   final String root;
+
+  /// 真实仓库的文档要求 CRLF；测试里注入的内存文档用 LF 写，默认不查这一条。
+  /// [loadRepoDocs] 会打开它。
+  final bool enforceCrlf;
 
   final FileExists _exists;
 
@@ -80,7 +87,10 @@ class DocLint {
       problems.addAll(_checkCodeLinks(rel, raw));
       problems.addAll(_checkStatusWords(rel, text));
       problems.addAll(_checkVersionTags(rel, text));
+      problems.addAll(_checkLineEndings(rel, raw));
     }
+
+    problems.addAll(_checkDirectoryIndexes());
 
     problems.sort((a, b) {
       final byFile = a.file.compareTo(b.file);
@@ -351,6 +361,76 @@ class DocLint {
     }
     return problems;
   }
+
+  // ------------------------------------------------------------ 目录索引完整性
+
+  /// 子目录的 README 是它的索引：目录里每份文档都得在 README 里查得到。
+  ///
+  /// 决策卡片最容易漏——新写一张忘了往表里加，从 `docs/AGENTS.md` 顺着链接
+  /// 进来的人根本看不见它，而卡片文件本身没有任何问题，死链与章节检查都绿。
+  List<LintProblem> _checkDirectoryIndexes() {
+    final problems = <LintProblem>[];
+    final byDir = <String, List<String>>{};
+    for (final rel in paths) {
+      if (!rel.startsWith('docs/')) continue;
+      final parts = rel.split('/');
+      if (parts.length < 3) continue; // docs/ 根下的正文不归目录索引管
+      final dir = parts.sublist(0, parts.length - 1).join('/');
+      byDir.putIfAbsent(dir, () => []).add(parts.last);
+    }
+
+    for (final entry in byDir.entries) {
+      final readmeRel = '${entry.key}/README.md';
+      final readme = _docs[joinPath(root, readmeRel)];
+      if (readme == null) continue;
+      for (final name in entry.value) {
+        if (name == 'README.md') continue;
+        if (!readme.contains(name)) {
+          problems.add(LintProblem(readmeRel, 1, LintSeverity.error,
+              '索引漏了 $name：目录里每份文档都要在 README 里能查到'));
+        }
+      }
+    }
+    return problems;
+  }
+
+  // -------------------------------------------------------------------- 行尾
+
+  /// 本项目 `docs/**` 与仓库根的 md 一律 CRLF；`docs/references/` 是外部材料，
+  /// 保持 LF 并整体豁免。
+  ///
+  /// 混用最麻烦：编辑工具只改一行就会把行尾换掉，之后整份文件在 diff 里
+  /// 看起来像被重写过，行号也对不上。门禁原先不查这一层。
+  List<LintProblem> _checkLineEndings(String rel, String raw) {
+    if (rel.contains('docs/references/')) return const [];
+    final totalLf = '\n'.allMatches(raw).length;
+    final crlf = '\r\n'.allMatches(raw).length;
+    final loneLf = totalLf - crlf;
+
+    if (crlf > 0 && loneLf > 0) {
+      return [
+        LintProblem(rel, _firstLoneLfLine(raw), LintSeverity.error,
+            '行尾混用：$crlf 行 CRLF、$loneLf 行纯 LF；改文档要保住原有行尾')
+      ];
+    }
+    if (enforceCrlf && crlf == 0 && totalLf > 0) {
+      return [
+        LintProblem(rel, 1, LintSeverity.error,
+            '文档应为 CRLF：当前是纯 LF（外部参考放 docs/references/）')
+      ];
+    }
+    return const [];
+  }
+
+  /// 第一处不以 `\r` 结尾的行；文件末尾那个空串不算一行。
+  int _firstLoneLfLine(String raw) {
+    final lines = raw.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      if (i == lines.length - 1 && lines[i].isEmpty) break;
+      if (!lines[i].endsWith('\r')) return i + 1;
+    }
+    return 1;
+  }
 }
 
 // -------------------------------------------------------------- 从磁盘加载
@@ -375,7 +455,7 @@ String findRepoRoot([String? from]) {
   return start;
 }
 
-/// 检查范围：根 `README.md` + `docs/**/*.md`，按字典序。
+/// 检查范围：仓库根的 `README.md` / `AGENTS.md` + `docs/**/*.md`，按字典序。
 ///
 /// `docs/references/` 也在内（它的死链照查），但不参与状态词检查——
 /// 那是外部参考，不该按本项目的写作规矩要求。
@@ -383,6 +463,9 @@ List<String> collectMarkdown(String root) {
   final out = <String>[];
   final rootReadme = File('$root/README.md');
   if (rootReadme.existsSync()) out.add(normalizePath(rootReadme.path));
+  // 根 AGENTS.md 里有一串指向 docs/ 的路径链接；不收进来，那几处死链查不到。
+  final rootAgents = File('$root/AGENTS.md');
+  if (rootAgents.existsSync()) out.add(normalizePath(rootAgents.path));
 
   final docs = Directory('$root/docs');
   if (!docs.existsSync()) return out;
@@ -401,7 +484,8 @@ List<String> collectMarkdown(String root) {
 /// 这一份——收集规则只能有一处，否则 CLI 绿而测试红这种怪事迟早出现。
 DocLint loadRepoDocs([String? root]) {
   final r = root == null ? findRepoRoot() : normalizePath(root);
-  final lint = DocLint(root: r);
+  // 真实仓库的文档按 CRLF 存；测试里注入的内存文档用 LF，那边默认关。
+  final lint = DocLint(root: r, enforceCrlf: true);
   for (final file in collectMarkdown(r)) {
     lint.add(relativePath(r, file), File(file).readAsStringSync());
   }

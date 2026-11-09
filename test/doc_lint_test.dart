@@ -398,6 +398,78 @@ void main() {
       expect(relativePath('/repo', '/other/a.md'), '/other/a.md');
     });
   });
+  // -------------------------------------------------------- 目录索引完整性
+
+  group('目录索引', () {
+    test('README 漏了一份文档报错误，并点名漏掉的那份', () {
+      final lint = _lint({
+        'docs/decisions/README.md':
+            '# 卡片\n\n| 卡片 | 主题 |\n|---|---|\n| [a.md](a.md) | 甲 |\n',
+        'docs/decisions/a.md': '# 甲',
+        'docs/decisions/b.md': '# 乙',
+      });
+      final p = lint.run().where((x) => x.message.contains('索引')).single;
+      expect(p.severity, LintSeverity.error);
+      expect(p.file, 'docs/decisions/README.md');
+      expect(p.message, contains('b.md'));
+    });
+
+    test('README 收全了不报（正例）', () {
+      final lint = _lint({
+        'docs/decisions/README.md':
+            '# 卡片\n\n| 卡片 |\n|---|\n| [a.md](a.md) | 甲 |\n| [b.md](b.md) | 乙 |\n',
+        'docs/decisions/a.md': '# 甲',
+        'docs/decisions/b.md': '# 乙',
+      });
+      expect(lint.run(), isEmpty);
+    });
+
+    test('没有 README 的目录不查', () {
+      expect(_lint({'docs/refs/a.md': '# 甲'}).run(), isEmpty);
+    });
+
+    test('docs/ 根下的文件不归任何目录索引管', () {
+      expect(_lint({'docs/architecture.md': '# 甲'}).run(), isEmpty);
+    });
+  });
+
+  // ------------------------------------------------------------------ 行尾
+
+  group('行尾', () {
+    test('同一份文档混用 CRLF 与 LF 报错误，并指到第一处', () {
+      final lint = _lint({'docs/a.md': '# 甲\r\n\r\n正文\n收尾\r\n'});
+      final p = lint.run().where((x) => x.message.contains('行尾')).single;
+      expect(p.severity, LintSeverity.error);
+      expect(p.line, 3);
+    });
+
+    test('纯 LF 的内存文档默认不报（测试注入用 LF 写）', () {
+      expect(_lint({'docs/a.md': '# 甲\n'}).run(), isEmpty);
+    });
+
+    test('真实仓库开启 CRLF 约定：纯 LF 报错误', () {
+      final lint =
+          DocLint(root: '/repo', exists: (_) => false, enforceCrlf: true)
+            ..add('docs/a.md', '# 甲\n');
+      final p = lint.run().single;
+      expect(p.severity, LintSeverity.error);
+      expect(p.message, contains('CRLF'));
+    });
+
+    test('CRLF 约定的正例', () {
+      final lint =
+          DocLint(root: '/repo', exists: (_) => false, enforceCrlf: true)
+            ..add('docs/a.md', '# 甲\r\n');
+      expect(lint.run(), isEmpty);
+    });
+
+    test('外部参考是 LF，两条都豁免', () {
+      final lint =
+          DocLint(root: '/repo', exists: (_) => false, enforceCrlf: true)
+            ..add('docs/references/x.md', '# 甲\n混一下\r\n');
+      expect(lint.run(), isEmpty);
+    });
+  });
 }
 
 /// 造一个全内存的检查器：`exists` 只认这次注入过的文档。

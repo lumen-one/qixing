@@ -27,6 +27,11 @@ void main() {
         reason: '只找到 ${paths.length} 份文档，仓库根可能没找对');
   });
 
+  test('根 AGENTS.md 也在检查范围内', () {
+    // 它里面有一串指向 docs/ 的路径链接，漏收就查不到那几处死链。
+    expect(paths, contains('AGENTS.md'));
+  });
+
   test('没有死链，也没有指空的章节引用', () {
     final errors = problems
         .where((p) => p.severity == LintSeverity.error)
