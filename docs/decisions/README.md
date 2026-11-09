@@ -72,6 +72,7 @@
 | [2026-11-07-mainline-abandon.md](2026-11-07-mainline-abandon.md) | 主线：完成之外还有废弃归档，两类并排 |
 | [2026-11-07-mainline-record-decoupled.md](2026-11-07-mainline-record-decoupled.md) | 主线记录页只记人写的那一半，色带压在数字后面 |
 | [2026-11-08-record-book-independent.md](2026-11-08-record-book-independent.md) | 记录与主线分家：各住一个文件，记录页没有只读态 |
+| [2026-11-09-log-date-repick.md](2026-11-09-log-date-repick.md) | 改记录日期回日历重圈一次，保存撞车不关框 |
 
 待补（都是"会被重新质疑"的取舍，按需要慢慢写）：
 
