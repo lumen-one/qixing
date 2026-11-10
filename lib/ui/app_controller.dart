@@ -658,6 +658,66 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---- 任务池搜索（§6.3）----
+
+  /// 任务池顶部那条搜索框开着吗。
+  ///
+  /// 它不像四个覆盖页那样盖住面板，但开合照样放控制器：宿主的返回键要问它
+  /// （收起顺序是"先收搜索框，再收面板"），换页也要靠它复位。
+  bool _poolSearchOpen = false;
+
+  bool get poolSearchOpen => _poolSearchOpen;
+
+  /// 下拉跟手的行程（逻辑像素，0 = 搜索框完全藏起来）。单独一个 notifier：
+  /// 拖动时每帧都在变，走 [notifyListeners] 会把整棵面板一起重建。
+  final ValueNotifier<double> poolSearchPull = ValueNotifier<double>(0);
+
+  /// 手指还按着（false = 已松手，搜索框该补满或弹回）。
+  final ValueNotifier<bool> poolSearchDragging = ValueNotifier<bool>(false);
+
+  /// 任务池在顶部继续下拉时喂进来的行程（只加正的）。
+  void pullPoolSearch(double px) {
+    if (_poolSearchOpen || px <= 0) return;
+    poolSearchDragging.value = true;
+    poolSearchPull.value = (poolSearchPull.value + px).clamp(0.0, 4000.0);
+  }
+
+  /// 松手：拉过阈值、或向下快甩（dy > 500 px/s）就补满，否则弹回。
+  void settlePoolSearch(double velocityY) {
+    // 普通滚动结束也会走到这里（每次 ScrollEndNotification）：没在拉就直接走开。
+    if (!poolSearchDragging.value && poolSearchPull.value == 0) return;
+    final enough = poolSearchPull.value >= planPullThreshold || velocityY > 500;
+    if (enough) {
+      openPoolSearch();
+    } else {
+      poolSearchDragging.value = false;
+      poolSearchPull.value = 0;
+    }
+  }
+
+  void openPoolSearch() {
+    if (_poolSearchOpen) {
+      poolSearchPull.value = 0;
+      poolSearchDragging.value = false;
+      return;
+    }
+    // 先立旗再松手：搜索条在"松手"那一刻就该知道往哪边补。
+    _poolSearchOpen = true;
+    notifyListeners();
+    poolSearchPull.value = 0;
+    poolSearchDragging.value = false;
+  }
+
+  /// 收起搜索框。关键字由页面自己清（它持有输入框），这里只管开合。
+  void closePoolSearch() {
+    if (_poolSearchOpen) {
+      _poolSearchOpen = false;
+      notifyListeners();
+    }
+    poolSearchPull.value = 0;
+    poolSearchDragging.value = false;
+  }
+
   // ---- 回收站（§6.14）----
 
   /// 回收站覆盖页开着吗。与 [planOpen] 同一套理由：状态在控制器，宿主的返回键
@@ -945,6 +1005,8 @@ class AppController extends ChangeNotifier {
     speedNoteDragging.dispose();
     speedNoteExit.dispose();
     speedNoteExiting.dispose();
+    poolSearchPull.dispose();
+    poolSearchDragging.dispose();
     trashPull.dispose();
     trashDragging.dispose();
     trashExit.dispose();

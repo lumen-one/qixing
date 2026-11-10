@@ -131,6 +131,43 @@ class PoolView {
   bool get isEmpty => plan.isEmpty && loose.isEmpty;
 }
 
+/// 任务池搜索（[panels/pool.md](../../docs/panels/pool.md)『下拉搜索』）：
+/// 标题、备注、标签三者取并集，空格分词按 AND，不分大小写。空查询原样返回。
+///
+/// 周期条目只按标题匹配——这一页给它的信息只有名字和日期，备注不在这里显示。
+/// 过滤后的 `hiddenLooseCount` 归零：那句话（"散件都在今日清单底部"）说的是
+/// 池子的常态，不是一次搜索的结果。
+PoolView filterPoolView(PoolView view, String query) {
+  final words = query
+      .toLowerCase()
+      .split(RegExp(r'\s+'))
+      .where((w) => w.isNotEmpty)
+      .toList(growable: false);
+  if (words.isEmpty) return view;
+
+  bool hit(String text) {
+    final hay = text.toLowerCase();
+    for (final w in words) {
+      if (!hay.contains(w)) return false;
+    }
+    return true;
+  }
+
+  bool hitTask(Task t) => hit('${t.title}\n${t.description}\n${t.tags.join(' ')}');
+
+  return PoolView(
+    plan: [for (final t in view.plan) if (hitTask(t)) t],
+    loose: [for (final t in view.loose) if (hitTask(t)) t],
+    rows: [
+      for (final row in view.rows)
+        if (row is PoolTaskRow
+            ? hitTask(row.task)
+            : row is PoolRoutineRow && hit(row.routine.title))
+          row,
+    ],
+  );
+}
+
 String dayMark(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}'
     '-${d.day.toString().padLeft(2, '0')}';

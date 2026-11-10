@@ -167,12 +167,52 @@ class _DrawerFallback extends StatefulWidget {
 class _DrawerFallbackState extends State<_DrawerFallback> {
   final TaskSelection _selection = TaskSelection();
 
+  /// 抽屉里那个 [DefaultTabController] 的控制器（点页签、横滑都走它）。
+  TabController? _tab;
+
+  /// 上一次的页号：listener 在动画里也会响，只有真的换到另一页才动手。
+  int _lastTab = 0;
+
   AppController get controller => widget.controller;
 
   @override
+  void initState() {
+    super.initState();
+    // 抽屉每次打开都是一份新 State：任务池的搜索态不跨这一趟（它过滤的是页面
+    // 内容，重开时顶着上次的关键字只会让人以为任务少了）。
+    if (controller.poolSearchOpen) controller.closePoolSearch();
+  }
+
+  @override
   void dispose() {
+    _tab?.removeListener(_onTabChanged);
     _selection.dispose();
     super.dispose();
+  }
+
+  /// 离开任务池就收起搜索框（与 `SidePanel` 同一条规矩）。**只在离开时关**：
+  /// 切回池子页那一下不该把刚要显示的那条也关掉。
+  void _leavePoolIfNeeded(int index) {
+    if (index != PanelPage.pool.index && controller.poolSearchOpen) {
+      controller.closePoolSearch();
+    }
+  }
+
+  void _onTabChanged() {
+    final tab = _tab;
+    if (tab == null || tab.index == _lastTab) return;
+    _lastTab = tab.index;
+    _leavePoolIfNeeded(tab.index);
+  }
+
+  /// 拿到抽屉自己的 TabController 并挂上 listener（它由 [DefaultTabController]
+  /// 创建在下面一层，只能在 Builder 里取）。
+  void _bindTab(BuildContext context) {
+    final tab = DefaultTabController.of(context);
+    if (identical(tab, _tab)) return;
+    _tab?.removeListener(_onTabChanged);
+    _tab = tab..addListener(_onTabChanged);
+    _lastTab = tab.index;
   }
 
   @override
@@ -196,33 +236,38 @@ class _DrawerFallbackState extends State<_DrawerFallback> {
         child: DefaultTabController(
           length: pages.length,
           initialIndex: widget.initialPage.clamp(0, pages.length - 1),
-          child: Scaffold(
-            appBar: TabBar(
-              // 四页都是三到四个字，抽屉最窄可到 240dp：不滚动会让标签互相挤。
-              isScrollable: true,
-              // 左对齐页内容（§8）：可滚动标签的默认对齐是 `startOffset`——
-              // 那 52dp 是给 AppBar 左侧头像留位的，抽屉里没有头像，留着就是
-              // 页名条左边一截空当（比下面的日期行缩进 50dp 还多）。
-              tabAlignment: TabAlignment.start,
-              // 18dp = 四页页内容的左右留白：页名左缘与日期行/标题左缘对齐。
-              labelPadding: const EdgeInsets.symmetric(horizontal: 18),
-              tabs: [for (final page in pages) Tab(text: page.label)],
-              labelColor: AppColors.accent,
-            ),
-            body: TabBarView(
-              children: [
-                for (final page in pages)
-                  _withActions(context, page, switch (page) {
-                    PanelPage.notes => NotesPanel(controller: controller),
-                    PanelPage.today =>
-                      TodayPanel(controller: controller, selection: _selection),
-                    PanelPage.pool =>
-                      PoolPanel(controller: controller, selection: _selection),
-                    PanelPage.completed => CompletedPanel(
-                        controller: controller, selection: _selection),
-                  }),
-              ],
-            ),
+          child: Builder(
+            builder: (context) {
+              _bindTab(context);
+              return Scaffold(
+                appBar: TabBar(
+                  // 四页都是三到四个字，抽屉最窄可到 240dp：不滚动会让标签互相挤。
+                  isScrollable: true,
+                  // 左对齐页内容（§8）：可滚动标签的默认对齐是 `startOffset`——
+                  // 那 52dp 是给 AppBar 左侧头像留位的，抽屉里没有头像，留着就是
+                  // 页名条左边一截空当（比下面的日期行缩进 50dp 还多）。
+                  tabAlignment: TabAlignment.start,
+                  // 18dp = 四页页内容的左右留白：页名左缘与日期行/标题左缘对齐。
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 18),
+                  tabs: [for (final page in pages) Tab(text: page.label)],
+                  labelColor: AppColors.accent,
+                ),
+                body: TabBarView(
+                  children: [
+                    for (final page in pages)
+                      _withActions(context, page, switch (page) {
+                        PanelPage.notes => NotesPanel(controller: controller),
+                        PanelPage.today =>
+                          TodayPanel(controller: controller, selection: _selection),
+                        PanelPage.pool =>
+                          PoolPanel(controller: controller, selection: _selection),
+                        PanelPage.completed => CompletedPanel(
+                            controller: controller, selection: _selection),
+                      }),
+                  ],
+                ),
+              );
+            },
           ),
         ),
       ),

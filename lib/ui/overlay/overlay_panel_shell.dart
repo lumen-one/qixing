@@ -322,6 +322,11 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
           widget.controller.closeMainline();
           return;
         }
+        // 任务池的搜索框是页内的一条（§6.3），不是覆盖页：同样先收它，再按才收面板。
+        if (widget.controller.poolSearchOpen) {
+          widget.controller.closePoolSearch();
+          return;
+        }
         _collapse();
       },
       child: Scaffold(

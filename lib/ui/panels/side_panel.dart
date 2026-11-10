@@ -106,10 +106,17 @@ class _SidePanelState extends State<SidePanel> {
   }
 
   /// 换页（含跟手横滑过半个屏幕的那一下）：双钮复位成"看得见"。
+  ///
+  /// 任务池的搜索框是页内的一条，**离开这一页**就清空收起——它过滤的是"这一页
+  /// 的内容"，带着一个字翻到今日清单去，只是让用户下次回来看到一个莫名其妙的
+  /// 结果集。切回池子那一下不关（否则刚打开的那条会被自己关掉）。
   void _onPageChanged() {
     final page = _currentPage;
     if (page == _page) return;
     _dockHidden.value = false;
+    if (page != PanelPage.pool.index && widget.controller.poolSearchOpen) {
+      widget.controller.closePoolSearch();
+    }
     setState(() => _page = page);
   }
 
@@ -348,8 +355,9 @@ class _SidePanelState extends State<SidePanel> {
   /// 页 → 页面本体：页序由 [PanelPage] 决定，这里只做"哪一页放哪个面板"。
   ///
   /// 今日页与灵感页单独放开鼠标拖拽（§6.11 / §6.13）：桌面没有触屏，编排与速记的
-  /// 入口得靠"按住鼠标拖到顶再往下拖"复现同一条手势；只包这两页，别的列表不受影响。
-  /// 已完成页同理（§6.14 进回收站）——桌面上一页都进不去就太怪了。
+  /// 入口得靠"按住鼠标拖到顶再往下拖"复现同一条手势；只包这几页，别的列表不受影响。
+  /// 已完成页同理（§6.14 进回收站）、任务池同理（下拉出搜索框）——桌面上一页都
+  /// 进不去就太怪了。
   Widget _pageBody(PanelPage page, AppController controller) => switch (page) {
         PanelPage.notes => ScrollConfiguration(
             behavior: ScrollConfiguration.of(context).copyWith(
@@ -363,8 +371,12 @@ class _SidePanelState extends State<SidePanel> {
             ),
             child: TodayPanel(controller: controller, selection: _selection),
           ),
-        PanelPage.pool =>
-          PoolPanel(controller: controller, selection: _selection),
+        PanelPage.pool => ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: PointerDeviceKind.values.toSet(),
+            ),
+            child: PoolPanel(controller: controller, selection: _selection),
+          ),
         PanelPage.completed => ScrollConfiguration(
             behavior: ScrollConfiguration.of(context).copyWith(
               dragDevices: PointerDeviceKind.values.toSet(),
