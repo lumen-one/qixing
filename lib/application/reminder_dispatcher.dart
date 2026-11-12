@@ -80,8 +80,15 @@ class ReminderDispatcher {
     await _reschedule();
   }
 
-  /// 设置页改了响铃时长：不重挂闹钟——它在起铃那一刻才读，改完下一次就生效。
-  void updateRingSeconds(int seconds) => ringSeconds = seconds;
+  /// 设置页改了响铃时长：**要重挂一次**。
+  ///
+  /// 应用被杀时起铃的是原生接收器，它只能读挂闹钟那一刻写进草案的秒数（`settings.json`
+  /// 只有 Dart 读得到）。不重挂的话，改完设置到下一次重锚之间的那几条仍按旧时长响。
+  Future<void> updateRingSeconds(int seconds) async {
+    if (seconds == ringSeconds) return;
+    ringSeconds = seconds;
+    await _reschedule();
+  }
 
   Future<void> start() async {
     _events ??= service.events.listen((e) {

@@ -50,6 +50,9 @@ class NativeBridge(
         /** 灵感文件选择器（`pickMarkdownFile`）。 */
         private const val PICK_FILE_REQUEST_CODE = 1
 
+        /** 响铃时长缺省值（秒）：只在 Dart 没带 `ringSeconds` 时用到。 */
+        private const val DEFAULT_RING_SECONDS = 60
+
         /** 当前活着的 bridge（供接收器直接投递事件）。 */
         @Volatile
         var activeInstance: NativeBridge? = null
@@ -165,6 +168,8 @@ class NativeBridge(
                 "cancelAlarm" -> result.success(cancelAlarm())
                 "showNotification" -> result.success(showNotification(call))
                 "cancelNotification" -> result.success(cancelNotification(call))
+                "startRinging" -> result.success(startRinging(call))
+                "stopRinging" -> result.success(stopRinging(call))
                 "drainEvents" -> result.success(NativeEventQueue.drain(activity))
                 "canUseFullScreenIntent" -> result.success(Notifier.canUseFullScreenIntent(activity))
                 "requestFullScreenIntentPermission" -> result.success(requestFullScreenIntentPermission())
@@ -200,11 +205,14 @@ class NativeBridge(
     private fun scheduleAlarm(call: MethodCall): Boolean {
         val reminder = readReminder(call, requireAt = true) ?: return false
         val atMillis = call.argument<Number>("atMillis")?.toLong() ?: return false
+        // 响铃时长随闹钟一起写进 extras：到点那一刻应用可能已经不在了，原生没有别的地方
+        // 问这个值（settings.json 归 Dart 读）。
+        val ringSeconds = call.argument<Number>("ringSeconds")?.toInt() ?: DEFAULT_RING_SECONDS
         // 契约：全局单闹钟，先撤销旧的（哪怕这次失败，旧闹钟也不该残留）。
         cancelAlarm()
 
         val manager = activity.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
-        val pendingIntent = alarmPendingIntent(reminder)
+        val pendingIntent = alarmPendingIntent(reminder, ringSeconds)
         return try {
             if (canScheduleExact(manager)) {
                 manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntent)
@@ -251,6 +259,31 @@ class NativeBridge(
     private fun cancelNotification(call: MethodCall): Boolean {
         val taskId = call.argument<String>("taskId") ?: return false
         return Notifier.cancel(activity, taskId)
+    }
+
+    // ------------------------------------------------------------------- 响铃
+
+    /**
+     * 起铃 / 续期（`AlarmRingPort.start`，ui-interaction.md §7.2）。
+     *
+     * 平时到点起铃走 [ReminderReceiver]（应用被杀也照响）；这一条是应用自己发起的补投，
+     * 两条都落到 [AlarmRingService.start]：同一件重复调用只是续期。
+     *
+     * @return true = 前台服务已拉起；false = 系统拒绝（后台启动受限等），调用方降级。
+     */
+    private fun startRinging(call: MethodCall): Boolean {
+        val reminder = readReminder(call, requireAt = false) ?: return false
+        val seconds = call.argument<Number>("seconds")?.toInt() ?: DEFAULT_RING_SECONDS
+        return AlarmRingService.start(activity, reminder, seconds)
+    }
+
+    /** 提前停（`AlarmRingPort.stop`）：响的不是这一件就什么都不做。 */
+    private fun stopRinging(call: MethodCall): Boolean {
+        val taskId = call.argument<String>("taskId") ?: return false
+        val ringing = AlarmRingService.ringingTaskId
+        if (ringing != null && ringing != taskId) return true
+        AlarmRingService.stop(activity)
+        return true
     }
 
     // ------------------------------------------------------------- 权限与查询
@@ -495,10 +528,13 @@ class NativeBridge(
         )
     }
 
-    private fun alarmPendingIntent(reminder: Reminder): PendingIntent = PendingIntent.getBroadcast(
+    private fun alarmPendingIntent(
+        reminder: Reminder,
+        ringSeconds: Int = DEFAULT_RING_SECONDS,
+    ): PendingIntent = PendingIntent.getBroadcast(
         activity,
         ALARM_REQUEST_CODE,
-        alarmIntent(activity, reminder),
+        alarmIntent(activity, reminder, ringSeconds),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
@@ -608,17 +644,18 @@ class NativeBridge(
  * 注意：PendingIntent 的"身份"由 requestCode + action + data + component 决定，
  * extras 不参与匹配。因此这里固定 action 串，让"取消旧闹钟"能命中同一个 PendingIntent，
  * 而 extras 走 FLAG_UPDATE_CURRENT 覆盖。
+ *
+ * [ringSeconds] 一起带上：到点那一刻应用可能已经被杀，接收器没有别的地方问响铃时长。
  */
-internal fun alarmIntent(context: Context, reminder: Reminder): Intent =
+internal fun alarmIntent(
+    context: Context,
+    reminder: Reminder,
+    ringSeconds: Int,
+): Intent =
     Intent(context, ReminderReceiver::class.java).apply {
         setAction(ReminderReceiver.ACTION_REMINDER_ALARM)
-        putExtra(ReminderExtras.TASK_ID, reminder.taskId)
-        putExtra(ReminderExtras.TITLE, reminder.title)
-        putExtra(ReminderExtras.BODY, reminder.body)
-        putExtra(ReminderExtras.CHANNEL, reminder.channel.name)
-        putExtra(ReminderExtras.FULL_SCREEN, reminder.fullScreen)
-        putStringArrayListExtra(ReminderExtras.ACTION_IDS, ArrayList(reminder.actions.map { it.id }))
-        putStringArrayListExtra(ReminderExtras.ACTION_LABELS, ArrayList(reminder.actions.map { it.label }))
+        putReminderExtras(reminder)
+        putExtra(ReminderExtras.RING_SECONDS, ringSeconds)
     }
 
 /** 从闹钟 Intent extras 还原 [Reminder]；缺字段时给出安全默认值。 */

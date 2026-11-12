@@ -14,6 +14,8 @@
     <!-- 悬浮手柄的前台服务（Android 14 起必须声明具体类型 + SPECIAL_USE） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <!-- 持续响铃的前台服务（mediaPlayback）：Android 14 起按类型各要一条普通权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <!-- 任务目录选择：授予"所有文件访问"后 file_picker 才能取到真实路径 -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
     <!-- 局域网同步（architecture.md §4.4）：HTTP/UDP 都只在本机网络内，不连外网。
@@ -48,11 +50,29 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 全屏闹钟页（ui-interaction §7.2）：独立 Activity，不拉起 MainActivity。
+             singleInstance = 同一刻只可能有一个页；锁屏/息屏直接铺满。
+             全屏 intent 权限被拒时系统不会拉起它，那条路径由通知栏兜底。 -->
+        <activity
+            android:name=".AlarmActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/AlarmTheme"/>
+        <!-- 持续响铃：mediaPlayback 前台服务（循环放系统闹钟音 + wakelock）。
+             stopWithTask=false：划掉应用不该把正在响的铃声一起掐掉。 -->
+        <service
+            android:name=".AlarmRingService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="mediaPlayback"/>
         <!-- 系统闹钟落地点：由 AlarmManager 唤醒，不需要被外部应用触发 -->
         <receiver
             android:name=".ReminderReceiver"
             android:exported="false"/>
-        <!-- 通知按钮（done / snooze1h）落地点：只回事件，不启动 Activity -->
+        <!-- 通知按钮（done / snooze1h）与『停止响铃』的落地点：只回事件 / 停声，不启动 Activity -->
         <receiver
             android:name=".ActionReceiver"
             android:exported="false"/>

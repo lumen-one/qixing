@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 全屏闹钟页（ui-interaction.md §7.2）：锁屏/息屏也要能看清，底色取暖深褐黑而不是纯黑。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/gtd_alarm_bg"
+    android:orientation="vertical"
+    android:paddingStart="28dp"
+    android:paddingEnd="28dp"
+    android:paddingTop="64dp"
+    android:paddingBottom="36dp">
+
+    <TextView
+        android:id="@+id/alarm_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:letterSpacing="0.22"
+        android:text="闹钟"
+        android:textColor="@color/gtd_alarm_accent"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/alarm_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:ellipsize="end"
+        android:maxLines="4"
+        android:textColor="@color/gtd_alarm_text"
+        android:textSize="30sp"
+        android:textStyle="bold" />
+
+    <!-- 正文可能有「同时还有：…」「接下来：…」两行（§7.2），所以不限行数。 -->
+    <TextView
+        android:id="@+id/alarm_body"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:lineSpacingExtra="6dp"
+        android:textColor="@color/gtd_alarm_text_dim"
+        android:textSize="16sp" />
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <Button
+        android:id="@+id/alarm_stop"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:backgroundTint="@color/gtd_alarm_accent"
+        android:text="停止响铃"
+        android:textColor="@color/gtd_alarm_bg"
+        android:textSize="17sp"
+        android:textStyle="bold" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/alarm_done"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="1"
+            android:backgroundTint="@color/gtd_alarm_surface"
+            android:text="完成"
+            android:textColor="@color/gtd_alarm_text"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/alarm_snooze"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:backgroundTint="@color/gtd_alarm_surface"
+            android:text="推迟 1 小时"
+            android:textColor="@color/gtd_alarm_text"
+            android:textSize="15sp" />
+    </LinearLayout>
+</LinearLayout>

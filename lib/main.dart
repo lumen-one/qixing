@@ -122,11 +122,25 @@ Future<void> main() async {
 
   // 交付层（§4.2/§4.3）：安卓走自建原生适配器；桌面用前台适配器
   // （Timer 闹钟 + 应用内弹窗回流）。
+  //
+  // `controller` 先声明、后构造：闹钟适配器要在**挂闹钟那一刻**读响铃时长
+  // （`alarm_ring_seconds`），而设置是控制器读完盘才有的——这个闭包只在
+  // `dispatcher.start()` 之后被调用，那时 controller 早已到位。
+  late final AppController controller;
   final bridge = isAndroid ? AndroidNativeBridge() : null;
-  final alarm = bridge != null ? AndroidAlarmPort(bridge) : TimerAlarmPort();
+  final alarm = bridge != null
+      ? AndroidAlarmPort(
+          bridge,
+          ringSeconds: () => controller.settings.alarmRingSeconds,
+        )
+      : TimerAlarmPort();
   final notifications = bridge != null
       ? AndroidNotificationPort(bridge, lookup: service.byId)
       : StreamNotificationPort();
+  // 持续响铃（§7.2）：只有安卓有这条通道；桌面注入 null，分发器就只投通知。
+  final ring = bridge != null
+      ? AndroidAlarmRingPort(bridge, lookup: service.byId)
+      : null;
   final permissions =
       bridge != null ? AndroidPermissionPort(bridge) : GrantedPermissionPort();
   final folderPicker = bridge != null
@@ -134,7 +148,7 @@ Future<void> main() async {
       : DesktopFolderPickerPort();
 
   late final ReminderDispatcher dispatcher;
-  final controller = AppController(
+  controller = AppController(
     service: service,
     taskDir: taskDir,
     routineService: routineService,
@@ -184,6 +198,8 @@ Future<void> main() async {
     // 编排是第三个提醒源：条目到点发一条静音消息（决定卡 2026-10-29-plan-reminder）。
     // 只挂主引擎——悬浮引擎没有自己的一份闹钟。
     plans: planService,
+    // 持续响铃（§7.2）：桌面 null，只投通知。
+    ring: ring,
     windows: NotificationWindowRule.defaultRule,
     ringSeconds: controller.settings.alarmRingSeconds,
   );

@@ -46,6 +46,28 @@ class _FakeAlarm implements AlarmPort {
   }
 }
 
+/// 假响铃端口：记录起铃与停铃。
+class _FakeRing implements AlarmRingPort {
+  final started = <({String taskId, int seconds})>[];
+  final stopped = <String>[];
+  String? _ringing;
+
+  @override
+  Future<void> start(String taskId, {required int seconds}) async {
+    started.add((taskId: taskId, seconds: seconds));
+    _ringing = taskId;
+  }
+
+  @override
+  Future<void> stop(String taskId) async {
+    stopped.add(taskId);
+    if (_ringing == taskId) _ringing = null;
+  }
+
+  @override
+  String? get ringingTaskId => _ringing;
+}
+
 /// 假通知端口：记录 show 调用。
 class _FakeNotifications implements NotificationPort {
   final shownList = <ShownNotification>[];
@@ -94,13 +116,17 @@ void main() {
   Future<ReminderDispatcher> startDispatcher({
     NotificationWindowRule windows = NotificationWindowRule.defaultRule,
     PlanService? plans,
+    AlarmRingPort? ring,
+    int ringSeconds = 60,
   }) async {
     final d = ReminderDispatcher(
       service: svc,
       alarm: alarm,
       notifications: notifications,
       plans: plans,
+      ring: ring,
       windows: windows,
+      ringSeconds: ringSeconds,
     );
     await d.start();
     return d;
@@ -394,7 +420,8 @@ void main() {
   });
 
   test('同一分钟的几件：第一个的正文并排列出其余件', () async {
-    await startDispatcher();
+    final ring = _FakeRing();
+    await startDispatcher(ring: ring);
     final a = await svc.createTask(
       title: '例会',
       type: TaskType.fixed,
@@ -420,11 +447,74 @@ void main() {
     expect(notifications.shownList, isNotEmpty);
     expect(notifications.shownList.first.channel, ReminderChannel.alarm,
         reason: '第一件起全屏响铃');
+    expect(ring.started, hasLength(1), reason: '第一件起铃');
 
     // 同一分钟的第二件：通知照发，但降级成普通渠道，不叠第二股铃声。
     alarm.fire();
     await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(notifications.shownList.last.channel, ReminderChannel.ring,
         reason: '本分钟已经起过闹钟，这一件只在普通通知里留一条');
+    expect(ring.started, hasLength(1),
+        reason: '同一分钟只起一个全屏页、一股铃声；第二件不二次起铃');
+  });
+
+  // 持续响铃（ui-interaction §7.2）：铃是"现在就要你注意"，只给开了闹钟的时点提醒。
+  test('开着闹钟的时点提醒到点 → 起铃，秒数取设置项', () async {
+    final ring = _FakeRing();
+    await startDispatcher(ring: ring, ringSeconds: 30);
+    final a = await svc.createTask(
+      title: '例会',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 19, 0),
+    );
+    await svc.setTaskAlarm(a.id, enabled: true);
+    await Future<void>.delayed(Duration.zero);
+
+    now = DateTime(2026, 10, 7, 19, 0);
+    alarm.fire();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(ring.started.single.taskId, a.id);
+    expect(ring.started.single.seconds, 30, reason: '设置里的响铃时长，不是写死的 60');
+    expect(notifications.shownList.single.channel, ReminderChannel.alarm);
+  });
+
+  test('软提醒恒普通通知：任务开了闹钟也不起铃', () async {
+    final ring = _FakeRing();
+    await startDispatcher(ring: ring);
+    final soft = await svc.createTask(
+      title: '写周报',
+      deadline: DateTime(2026, 10, 7, 18, 0),
+      estimatedWorkMinutes: 60,
+    );
+    // 『闹钟』只对时点提醒生效；截止型的裕度提醒照旧走通知栏。
+    await svc.setTaskAlarm(soft.id, enabled: true);
+    await Future<void>.delayed(Duration.zero);
+
+    now = DateTime(2026, 10, 7, 16, 30);
+    alarm.fire();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(notifications.shownList.single.channel, ReminderChannel.ring);
+    expect(ring.started, isEmpty, reason: '软提醒不许响铃');
+  });
+
+  test('改响铃时长 → 重挂一次：已挂的那条闹钟也要换成新秒数', () async {
+    final d = await startDispatcher(ringSeconds: 30);
+    final a = await svc.createTask(
+      title: '例会',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 19, 0),
+    );
+    await svc.setTaskAlarm(a.id, enabled: true);
+    await Future<void>.delayed(Duration.zero);
+    final cancelsBefore = alarm.cancels;
+
+    await d.updateRingSeconds(120);
+
+    expect(d.ringSeconds, 120);
+    expect(alarm.cancels, greaterThan(cancelsBefore),
+        reason: '原生接收器只能读挂闹钟时写下的秒数，不重挂就还是旧时长');
+    expect(alarm.taskId, a.id, reason: '重挂的是同一站，不改变谁响、也不改变时刻');
   });
 }

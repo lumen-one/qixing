@@ -15,4 +15,14 @@
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+
+    <!-- 全屏闹钟页（ui-interaction.md §7.2）：不随系统明暗切换，恒为暖深褐黑。
+         锁屏/息屏直接铺满，所以没有标题栏，状态栏与导航栏也压成同一个底色。 -->
+    <style name="AlarmTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/gtd_alarm_bg</item>
+        <item name="android:colorAccent">@color/gtd_alarm_accent</item>
+        <item name="android:statusBarColor">@color/gtd_alarm_bg</item>
+        <item name="android:navigationBarColor">@color/gtd_alarm_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>

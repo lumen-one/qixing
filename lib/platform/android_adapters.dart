@@ -5,16 +5,17 @@ import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../application/delivery.dart';
+import '../application/settings.dart';
 import '../domain/reminder.dart';
 import '../domain/task.dart';
 
 /// 安卓交付类适配器（§4.2/§4.3）：系统精确闹钟 + 系统通知（含快捷按钮与
-/// 全屏闹钟）+ 权限引导 + 任务目录选择。
+/// 全屏闹钟）+ 持续响铃 + 权限引导 + 任务目录选择。
 ///
 /// 原生侧（android/app/src/main/kotlin/com/lumenone/qixing/）：
-/// - MethodChannel `gtd/native`：Dart 调原生（挂闹钟/弹通知/权限/悬浮把手/读版本号）；
+/// - MethodChannel `gtd/native`：Dart 调原生（挂闹钟/弹通知/起铃停铃/权限/悬浮把手/读版本号）；
 /// - MethodChannel `gtd/native/events`：原生回传（到点、通知按钮、点通知定位、
-///   把手拖出）。应用被杀时原生接收器自己按"内容草案"弹通知；
+///   把手拖出、铃声已停）。应用被杀时原生接收器自己按"内容草案"弹通知并起铃；
 ///   事件先入队，Dart 启动后 `drainEvents` 取走。
 ///
 /// 本文件不受 §2 import 矩阵约束（组装点装配），但不得被核心 import。
@@ -59,6 +60,7 @@ class AndroidNativeBridge {
     required DateTime at,
     required String taskId,
     ReminderDraft? draft,
+    int ringSeconds = 60,
   }) =>
       _invoke('scheduleAlarm', {
         'atMillis': at.millisecondsSinceEpoch,
@@ -68,6 +70,9 @@ class AndroidNativeBridge {
         'channel': (draft?.channel ?? ReminderChannel.ring).name,
         'fullScreen': draft?.fullScreen ?? false,
         'actions': _actionsArg(draft?.actions ?? const []),
+        // 到点那一刻应用可能已经被杀，接收器只能照这份 extras 起铃：响铃时长跟闹钟
+        // 一起挂上去，别让原生自己去猜设置页里填的数。
+        'ringSeconds': ringSeconds,
       });
 
   Future<bool> cancelAlarm() => _invoke('cancelAlarm');
@@ -91,6 +96,31 @@ class AndroidNativeBridge {
 
   Future<bool> cancelNotification(String taskId) =>
       _invoke('cancelNotification', {'taskId': taskId});
+
+  /// 起铃 / 续期（`AlarmRingPort.start`）：原生前台服务循环播放，到秒自停。
+  ///
+  /// [title] 只是停声后重投那条通知的文案；应用被杀那条路径由原生接收器自己带着
+  /// 交付草案起铃，不经过这里。
+  Future<bool> startRinging({
+    required String taskId,
+    required int seconds,
+    String? title,
+    String? body,
+    List<NotificationAction> actions = const [],
+  }) =>
+      _invoke('startRinging', {
+        'taskId': taskId,
+        'title': title ?? '该做这件事了',
+        'body': body,
+        'seconds': seconds,
+        // 停声后要重投"可划走"的那一份通知，渠道得是闹钟那条。
+        'channel': ReminderChannel.alarm.name,
+        'actions': _actionsArg(actions),
+      });
+
+  /// 提前停（`AlarmRingPort.stop`）：没在响就是空操作。
+  Future<bool> stopRinging(String taskId) =>
+      _invoke('stopRinging', {'taskId': taskId});
 
   Future<bool> canUseFullScreenIntent() => _invoke('canUseFullScreenIntent');
 
@@ -169,12 +199,26 @@ class AndroidNativeBridge {
 class AndroidAlarmPort implements AlarmPort {
   final AndroidNativeBridge bridge;
 
-  AndroidAlarmPort(this.bridge);
+  /// 响铃时长（秒）：挂闹钟那一刻一起写进 extras。
+  ///
+  /// 应用被杀时是原生接收器起铃，那一刻没有 Dart 可问 `alarm_ring_seconds`——所以这个
+  /// 值必须随闹钟落地（settings.json 只有这一层读得到）。
+  final int Function() ringSeconds;
+
+  AndroidAlarmPort(this.bridge, {int Function()? ringSeconds})
+      : ringSeconds = ringSeconds ?? _defaultRingSeconds;
+
+  static int _defaultRingSeconds() => defaultAlarmRingSeconds;
 
   @override
   Future<void> scheduleNext(DateTime at, String taskId,
       {ReminderDraft? draft}) async {
-    await bridge.scheduleAlarm(at: at, taskId: taskId, draft: draft);
+    await bridge.scheduleAlarm(
+      at: at,
+      taskId: taskId,
+      draft: draft,
+      ringSeconds: ringSeconds(),
+    );
   }
 
   @override
@@ -239,6 +283,55 @@ class AndroidNotificationPort implements NotificationPort {
     return '到点 ${d.hour.toString().padLeft(2, '0')}:'
         '${d.minute.toString().padLeft(2, '0')}';
   }
+}
+
+/// 持续响铃（ui-interaction.md §7.2）：循环、前台服务、wakelock 都在原生
+/// `AlarmRingService` 里，这层只下命令。
+///
+/// 两条起铃路径都落到同一个服务：应用被杀时由 `ReminderReceiver` 照交付草案起铃，
+/// 应用活着时由分发器经这里起（同一件重复 start 只是续期，不叠声）。
+class AndroidAlarmRingPort implements AlarmRingPort {
+  final AndroidNativeBridge bridge;
+
+  /// 停声后重投那条通知的文案来源（与 [AndroidNotificationPort] 同一个 lookup）。
+  final Task? Function(String taskId)? lookup;
+
+  String? _ringing;
+
+  AndroidAlarmRingPort(this.bridge, {this.lookup}) {
+    // 全屏页与通知按钮也能停声（纯原生那条路）：停完回一条事件，这里才知道
+    // "已经不响了"，别对着一个早就停掉的铃声报 [ringingTaskId]。
+    bridge.events
+        .where((e) => e['type'] == 'ringStopped')
+        .listen(_onRingStopped);
+  }
+
+  void _onRingStopped(Map<String, Object?> event) {
+    final id = event['taskId'] as String?;
+    if (id == null || id.isEmpty || id == _ringing) _ringing = null;
+  }
+
+  @override
+  Future<void> start(String taskId, {required int seconds}) async {
+    final task = lookup?.call(taskId);
+    final ok = await bridge.startRinging(
+      taskId: taskId,
+      seconds: seconds,
+      title: task?.title,
+    );
+    // 原生拒绝（Android 12+ 后台启动受限 / 厂商拦截）时不假装在响：这条提醒还剩
+    // 通知栏那条路，分发器不用知道，[ringingTaskId] 说实话。
+    _ringing = ok ? taskId : null;
+  }
+
+  @override
+  Future<void> stop(String taskId) async {
+    await bridge.stopRinging(taskId);
+    if (_ringing == taskId) _ringing = null;
+  }
+
+  @override
+  String? get ringingTaskId => _ringing;
 }
 
 /// 权限引导（permission_handler + 原生全屏 intent / 悬浮窗查询）。

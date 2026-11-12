@@ -5,4 +5,11 @@
     <color name="gtd_handle_orange_light">#33FFFFFF</color>
     <!-- 自适应图标背景：取插画天空的中间调，前景图缩小绘制时露出的边 -->
     <color name="ic_launcher_background">#F4F5FC</color>
+
+    <!-- 全屏闹钟页：暖深褐黑底（与 Flutter 深色模式的纸底一致），橙作唯一强调色 -->
+    <color name="gtd_alarm_bg">#1E1B18</color>
+    <color name="gtd_alarm_surface">#2A2622</color>
+    <color name="gtd_alarm_accent">#FF8A3D</color>
+    <color name="gtd_alarm_text">#F2EDE7</color>
+    <color name="gtd_alarm_text_dim">#C9C1B8</color>
 </resources>
