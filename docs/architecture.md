@@ -19,11 +19,11 @@
 >   **长期任务例外**：工作强度 = '长期'（三无任务的创建缺省）时，上面那些字段
 >   全部缺行——这份文档只剩一个任务 id。
 >
-> **提醒（见 §3.1）**：**有时间的任务一律提醒**，两档都走同一条链路——没有"这一档不出声"
-> 这种东西。**出声与否是任务自己的属性**：metadata `remind`（界面上的『响铃』开关）只决定
-> 这条提醒**响不响**，不决定发不发；送达形态固定是**通知栏 + 横幅**（高优先级渠道）。
-> 唯一的例外是设置页的**闹钟模式**：它把开始型的到点提醒升级成全屏闹钟，覆盖掉那一条的
-> 通知栏投递。"什么时候允许打扰"（通知时间段，§4.3）仍各管一段。
+> **提醒（见 §3.1）**：**有时间的任务一律提醒**，两档都走同一条链路——普通提醒固定是
+> **通知栏 + 横幅 + 提示音 + 震动**（高优先级渠道），没有"静音"这一档。**要不要升级成闹钟
+> 是任务自己的属性**：metadata `alarm`（界面上的『闹钟』开关）把**时点提醒**升级成全屏 +
+> 持续响铃，不改变发不发、也不改变时刻。"什么时候允许打扰"（通知时间段，§4.3）仍各管一段，
+> 闹钟不吃时间段。
 >
 > **调度模式两档（见 §3.1）**：**无排序 → 标准**，一条**信息深度**的谱系——
 > 上一档多问一样属性，一次只能选一个：
@@ -137,7 +137,7 @@
 
 | 类型 | 职责 |
 | --- | --- |
-| `Task` | 任务事实：id、title、**created（= 人类文档的「创建」，由人类文档持有）**、**deadline（可空：fixed=时点 / flex=截止 / null=散件）**、**estimatedWork（可表达'长期'：三无缺省，标记而非分钟数；长期任务同时没有 remainingWork 与 importance）**、remainingWork、importance、status、snoozedUntil、description、**tags**、**completedAt**、**ringEnabled（metadata `remind`，这条提醒响不响铃）**、metadata；**不可变 + copyWith（由编译器强制写路径唯一）**；类型 TaskType 走 metadata 缓冲带 |
+| `Task` | 任务事实：id、title、**created（= 人类文档的「创建」，由人类文档持有）**、**deadline（可空：fixed=时点 / flex=截止 / null=散件）**、**estimatedWork（可表达'长期'：三无缺省，标记而非分钟数；长期任务同时没有 remainingWork 与 importance）**、remainingWork、importance、status、snoozedUntil、description、**tags**、**completedAt**、**alarmEnabled（metadata `alarm`，这条时点提醒要不要升级成闹钟）**、metadata；**不可变 + copyWith（由编译器强制写路径唯一）**；类型 TaskType 走 metadata 缓冲带 |
 | `TaskType` | flex（截止型）/ fixed（开始型）/ **routine（周期实例）**——三者的调度与完成语义不同 |
 | `Routine` | 周期规则：频率（每天/每周 X）、时点、响不响、启用开关；**不是任务**（住在 `routines.md`），每天生成一个当天实例（TaskType.routine） |
 | `Mainline` | 主线：当前在推进的一件大事（同时只有一条在跑）。行为链（`MainlineStep`）是它自己的步骤、**不是任务**；它**只有行为链**——日历上的记录不住在这里。住在 `tasks/主线.md`（[主线文件](formats/mainline.md)） |
@@ -231,9 +231,9 @@ nextReminderAt = min(沿用旧锚点（仍有效时）否则 addWorkMinutes(now,
   不参与排序，摆一个改了不影响顺序的滑块就是骗人。
 
 **没有提醒门槛**：两档都产出提醒，`ScheduleResult.nextReminderAt` 取的全是"下一站"，
-与"这件要不要响铃"无关——响不响是任务自己的 `remind`，到送达那一刻才用（挑 `ring` 还是
-`silent` 渠道，§4.3）。"今天该看哪几件"（今日清单准入）与"会不会有声音"因此彻底分成两件
-事：前者看锚点，后者看渠道。
+与"这件开不开闹钟"无关——开不开是任务自己的 `alarm`，到送达那一刻才用（挑 `alarm` 还是
+`ring` 渠道，§4.3）。"今天该看哪几件"（今日清单准入）与"闹不闹"因此彻底分成两件事：
+前者看锚点，后者看渠道。
 **无排序档不产出 `TaskMetric`**：它的两站提醒直接由 `TaskService.nextPointReminder()` 给出。
 
 **旧算法 `slack.v1` 保留在注册表里作对照**；与默认算法的差异只有**排序键**一处：
@@ -268,11 +268,11 @@ nextReminderAt = min(沿用旧锚点（仍有效时）否则 addWorkMinutes(now,
 - B3. `risk = f(slack)`（非线性，§3.1 公式）与 `priority = risk × importance` 都是
   **派生值**：算出来的排序键，**不写入任何文档**。内核属性文档里的
   `priority` 键始终指**人定的优先级**（= `Task.importance`），与调度优先级同名不同物。
-- B4. **提醒一律发出，响不响另说**：有时间的任务都进提醒链路——截止型走软提醒，开始型
-  走到点；无排序档两者都走两站时点提醒。metadata `remind` = 『响铃』，读在送达那一刻
-  （`ReminderChannel` 的 `ring` / `silent`），**不影响**锚点、间隔、`nextReminderAt`，也不
-  影响这一件进不进 `nextPointReminder()`。缺键 = 静音：旧版本只在人主动开提醒时才写
-  `true`，那个意图就照静音延续。
+- B4. **提醒一律发出，闹不闹另说**：有时间的任务都进提醒链路——截止型走软提醒，开始型
+  走到点；无排序档两者都走两站时点提醒。metadata `alarm` = 『闹钟』，读在送达那一刻
+  （`ReminderChannel` 的 `alarm` / `ring`），**不影响**锚点、间隔、`nextReminderAt`，也不
+  影响这一件进不进 `nextPointReminder()`。缺键 = 不开闹钟（普通提醒照发，有声有横幅）。
+  只有时点提醒能开：标准档的截止型走软提醒，不摆这一行；已存的键保留但不生效。
 - B5. **手动序是用户意图**：`manual_order`（metadata，非负整数序号）
   = 人拖出来的顺序，**持久化在任务上**；与 `pinned`（插队）、`pool_order`（池子整理）
   同属"人的意图"一类，和 B3 的调度优先级正好相反——后者不落盘、换算法即变。手动序
@@ -343,7 +343,7 @@ TaskService 每个命令完成后广播 `DomainEvent`（含 origin）。通知�
 | `completeTask` / `snoozeTask` / `snoozeUntil` / `snoozeToNextWindow` / `logWork` | 完成 / 推迟（两档）/ 绝对档位推迟（明早 9 点、自选）/ 记工时。**完成命令顺手清掉两个挂起标记**（`in_progress` + `in_progress_daily`：挂起是每日的，完成才算彻底离开）                                                                             |
 | `updateTask`                                                                     | 更新（含类型转换 fixed↔flex、清截止；fixed 必须有截止的合并后校验）。**清截止不自动改写工作强度**：'长期' ↔ 数字工时都在编辑里显式设，不悄悄改语义（§3.4 防线三）。**失去挂起资格（有了截止或换成数字工时）时两个挂起标记一起清**——留着它会让这件既进不了挂起组、又被挡在调度组之外                                                          |
 | `pinToTop(taskId)`                                                               | 插队 = 持久意图记在任务（metadata `pinned`），保持到完成、栈式压顶；仅对截止型组生效，**且无排序档下不生效**（那一档顺序整体由 `manual_order` 定，见 B5）                                                                            |
-| `setTaskReminder(taskId, enabled)`                                               | **逐任务响铃开关**（表单上的『响铃』）：写 metadata `remind`。提醒照发，它只决定这条提醒走 `ring` 还是 `silent` 渠道                                                                                                    |
+| `setTaskAlarm(taskId, enabled)`                                                   | **逐任务闹钟开关**（表单上的『闹钟』）：写 metadata `alarm`。提醒照发，它只决定这条**时点提醒**走 `alarm` 还是 `ring` 渠道 |
 | `pickForToday` / `returnToPool`                                                  | 挑散件到今日尾部（`picked_for_today` 标记，当日手动挑优先、尾部最多一件）/ 放回池子                                                                                                                                                      |
 | `setLooseHome(taskId, home)`                                                     | 散件的家（metadata `loose_home`）：`pool` = 住池子散件段、`today` = 住今日页 ⑥（删键）。**只在无排序档参与分区**，切档不迁移；互逆的两个菜单动作共用这一条 |
 | `setPoolOrder(taskId, order)`                                                    | 池子显示序（`pool_order`，仅整理无调度含义，重启保留）；**单条改序**——一次手势要改整段时走下一条                                                                                                                                         |
@@ -369,7 +369,7 @@ TaskService 每个命令完成后广播 `DomainEvent`（含 origin）。通知�
 
 领域事件相应扩充：taskPinned / taskPicked / taskRestored / trashPurged、
 **routineCreated / routineUpdated / routineDeleted / routineInstanceGenerated /
-routineSkipped（taskId = 规则 id 或实例 id）**、**taskReminderSet（逐任务提醒开关）**、**manualOrderChanged / scheduleModeChanged（手动序改写与调度模式切换，订阅者只需重算视图）**、**poolOrderChanged（池子整理序整段改写）**、**taskInProgressSet（挂起进行开关与挂起组整段重写，订阅者只需重算视图）**、
+routineSkipped（taskId = 规则 id 或实例 id）**、**taskAlarmSet（逐任务闹钟开关）**、**manualOrderChanged / scheduleModeChanged（手动序改写与调度模式切换，订阅者只需重算视图）**、**poolOrderChanged（池子整理序整段改写）**、**taskInProgressSet（挂起进行开关与挂起组整段重写，订阅者只需重算视图）**、
 **looseHomeChanged（散件在两个家之间搬家，订阅者只需重算视图）**。
 
 > **一次用户手势 = 一个事件 + 一次重算；落盘排在事件之后**。
@@ -739,7 +739,8 @@ UI 仅经 AppController 访问，守卫规则 2 拦截回归。
 | **系统手势排除区只给了把手**            | 面板是全屏 overlay 窗口，**没有**声明 `setSystemGestureExclusionRects`：从边缘起手的横向手势仍可能被系统判成返回（结果 = 收起面板，语义恰好一致，见 ui-interaction.md）。不给面板加排除区的理由：每边排除区有系统竖向上限（约 200dp），整条边保护不住；加满会丢掉"边缘 = 返回"这个自然退出口。把手只有一小块、在配额内，独占它就够了                                                                                                                                                       | 用户抱怨"贴着边缘滚清单误触返回"（→ 改为整条边声明，接受系统上限）；或某个 ROM 不认把手那份排除区导致横拖打开失效（→ 退化到点按兜底）             |
 | 周期实例按天物化成任务文件               | 每天一份：人类文档里一行（`- [ ] 晨跑 %%创建 …%%`，Obsidian 可见）+ 内核属性文档 `.gtd/<规则id>-<yyyy-MM-dd>.md`（完成/跳过都有地方落）；规则多时目录文件数会增长，需靠回收站/手工清理历史                                                                                                                                                                                                                                                                                                             | 目录膨胀到影响浏览时（改为归档子目录或按需生成）                                                                                                                |
 | 主题只换强调色与明暗                     | 明暗三选一可用（跟随系统/浅色/深黑，默认跟随系统；深色底为暖深褐黑，逾期橙红暗色下提亮）；仍**不是完整主题包**——字体、密度、圆角体系不随主题变                                                                                                                                                                                                                                                                                                                                                                                                                                   | 需要完整主题包（换密度/字号/圆角等系统性视觉）时                                                                                                                    |
-| **老任务默认静音** | 新建任务默认打开『响铃』（写 metadata `remind`），但**旧版本带过来的任务身上没有这个标记**：升级后它们照样提醒，只是走静音渠道——只有横幅与通知栏，没有声音。想让它响就逐条打开『响铃』（迁移不去改人的数据）| "提醒来了没听见"成为主诉时（考虑首次创建时问一句要不要响，或按截止逼近度自动升级为响铃）|
+| **老任务升级后一律有声** | 旧版的『响铃』（`remind`）自带"缺键 = 静音"，那批任务升级后没有 `alarm` 标记 → 不开闹钟，但普通提醒**从此有提示音与震动**：以前安静惯了的任务会开始出声。迁移不去改人的数据，`remind` 键原样留着但不读 | "老任务怎么突然响了"成为主诉时（考虑首次启动时问一句，或给旧键一个过渡开关）|
+| **桌面上没有闹钟** | 闹钟渠道只存在于安卓（`ShellCapabilities.alarmChannel`）：桌面表单不摆『闹钟』这一行、设置页也没有默认值与响铃时长，所以桌面新建的任务不写 `alarm`（这一档恒为关）。手机上开的闹钟同步到桌面只是数据，这套壳不会响 | 桌面也要"到点全屏提醒"时（那是另一套抢焦点的机制，别复用安卓那条）|
 | **风险的尺度 τ 是全局的**                | 同一个 τ（默认 1 个工作日）套在所有任务上："三天后交"和"三小时后交"用同一个尺度；个人对"紧"的感受只能靠调 τ/γ 或改 importance 表达                                                                                                                                                                                                                                                                                                                                                                 | 出现"同一批任务需要不同压力尺度"的真实需求时（按标签/分类配尺度）                                                                                               |
 | **旧算法只在注册表里留着**               | `slack.v1` 保留是为了对照；设置页**没有**"换算法"入口（要改得动组装点）。这符合 §8"换/加算法 = 注册一个新 Scheduler"，但用户当下无法自选                                                                                                                                                                                                                                                                                                                                                 | 需要"用户自选算法"时（设置里补一个选择器；注册表与 `params` 都已就绪）                                                                                          |
 | **重要度是标准档里的一个开关**                   | 顺序、分组、编号、今日清单准入、提醒节奏都与它无关：打开只是把 `priority` 乘上 1–5，关掉时乘数为 1、表单里也不出现。已存的值不删，切回来即恢复                                                                                                                                                                                                                                                                                                                                                     | 要求"重要度只影响显示、不影响排序"时（那要另立一个字段，别复用 `importance`）                                                                                   |

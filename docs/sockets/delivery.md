@@ -6,7 +6,7 @@
 ## 接口
 
 ```dart
-enum ReminderChannel { ring, silent, alarm }   // ring = 有声+震动；silent = 只横幅；alarm = 全屏 + 持续响铃
+enum ReminderChannel { ring, silent, alarm }   // ring = 提示音 + 震动；silent = 只横幅（仅编排条目）；alarm = 全屏 + 持续响铃
 enum PermissionKind {
   notifications, exactAlarm, batteryExemption,
   overlayWindow,        // 悬浮侧边栏（SYSTEM_ALERT_WINDOW）
@@ -29,12 +29,21 @@ abstract class NotificationPort {
   Future<void> show(ReminderEvent event, {
     List<NotificationAction> actions = const [],
     ReminderChannel channel = ReminderChannel.ring,
-    bool fullScreen = false,        // full-screen intent（闹钟模式）
+    bool fullScreen = false,        // full-screen intent（闹钟）
     ReminderDraft? draft,           // 系统通知实现用它渲染文案
   });
   /// 桌面的"托盘"就是应用窗口：适配器把 show 回流给 UI 渲染弹窗；
   /// 系统通知实现返回空流（安卓的按钮/点击走原生事件回传，见 4.3）。
   Stream<ShownNotification> get shown;
+}
+
+/// 持续响铃：与通知分开的一条通道——通知是"留在那儿的消息"，铃声是"现在就要你注意"。
+/// 循环播放，到 [seconds] 自停；[stop] 供全屏页与通知按钮提前停。桌面壳没有这个能力
+/// （`ShellCapabilities.alarmChannel` 为 false），装配点注入 null、分发器就不起铃。
+abstract class AlarmRingPort {
+  Future<void> start(String taskId, {required int seconds});
+  Future<void> stop(String taskId);
+  String? get ringingTaskId;      // 正在响的那一件；null = 没在响
 }
 
 abstract class AlarmPort {
@@ -64,9 +73,10 @@ abstract class PermissionPort {
 桌面任务目录走环境变量 `GTD_TASKS_DIR` / 引导配置，不做目录选择 UI）。
 
 安卓适配器（`lib/platform/android_adapters.dart` + `android/…/gtd/` 原生侧）：
-`AndroidAlarmPort` / `AndroidNotificationPort`（系统精确闹钟 AlarmManager + 通知渠道
-`gtd_ring`/`gtd_silent`/`gtd_alarm`/`gtd_overlay` + 通知按钮 + full-screen intent；前两个都是
-IMPORTANCE_HIGH——横幅必现，区别只在有没有声音与震动）、
+`AndroidAlarmPort` / `AndroidNotificationPort` / `AndroidAlarmRingPort`（系统精确闹钟
+AlarmManager + 通知渠道 `gtd_ring`/`gtd_silent`/`gtd_alarm`/`gtd_overlay` + 通知按钮 +
+full-screen intent + 循环铃声服务；`gtd_ring` 与 `gtd_silent` 都是 IMPORTANCE_HIGH——横幅
+必现，区别只在有没有声音与震动，`silent` 只给编排条目）、
 `AndroidPermissionPort`（permission_handler + 原生全屏 intent/悬浮窗查询）、
 `AndroidFolderPickerPort`（所有文件访问 + 系统目录选择器；挑文件走自建 SAF
 `pickMarkdownFile`，把 documentId 换成真实路径，**不经 file_picker**——它挑文件只回缓存

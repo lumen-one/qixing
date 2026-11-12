@@ -67,3 +67,6 @@ created: 2026-10-07T09:00
 | `created`          | ISO8601      | 创建时间                                  |
 | `schema`           | int（规划）  | 迁移版本号，见 [架构文档](../architecture.md) §3.4 防线三                |
 
+> 规则自己的 `remind` 是"这一条要不要有时点提醒"，与任务上已退役的同名键无关——
+> 同名不同物。任务侧的闹钟开关是 `alarm`（[sidecar.md](sidecar.md)）。
+
