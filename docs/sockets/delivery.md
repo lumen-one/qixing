@@ -72,11 +72,12 @@ abstract class PermissionPort {
 `GrantedPermissionPort`、`DesktopFolderPickerPort`（**文件可挑，目录仍不挑**——
 桌面任务目录走环境变量 `GTD_TASKS_DIR` / 引导配置，不做目录选择 UI）。
 
-安卓适配器（`lib/platform/android_adapters.dart` + `android/…/gtd/` 原生侧）：
+安卓适配器（`lib/platform/android_adapters.dart` + `android/…/com/lumenone/qixing/` 原生侧）：
 `AndroidAlarmPort` / `AndroidNotificationPort` / `AndroidAlarmRingPort`（系统精确闹钟
-AlarmManager + 通知渠道 `gtd_ring`/`gtd_silent`/`gtd_alarm`/`gtd_overlay` + 通知按钮 +
-full-screen intent + 循环铃声服务；`gtd_ring` 与 `gtd_silent` 都是 IMPORTANCE_HIGH——横幅
-必现，区别只在有没有声音与震动，`silent` 只给编排条目）、
+AlarmManager + 通知渠道 `gtd_ring`/`gtd_silent`/`gtd_alarm`/`gtd_ringing`/`gtd_overlay` +
+通知按钮 + full-screen intent + 循环铃声服务 `AlarmRingService`（它自己的前台通知走
+`gtd_ringing`，静音——声音归播放器，不归渠道）；`gtd_ring` 与 `gtd_silent` 都是
+IMPORTANCE_HIGH——横幅必现，区别只在有没有声音与震动，`silent` 只给编排条目）、
 `AndroidPermissionPort`（permission_handler + 原生全屏 intent/悬浮窗查询）、
 `AndroidFolderPickerPort`（所有文件访问 + 系统目录选择器；挑文件走自建 SAF
 `pickMarkdownFile`，把 documentId 换成真实路径，**不经 file_picker**——它挑文件只回缓存
