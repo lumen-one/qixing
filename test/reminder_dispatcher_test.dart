@@ -363,4 +363,68 @@ void main() {
     expect((await fired).taskId, 't1');
     await port.cancel();
   });
+
+  // 闹钟正文附带"后面还有什么"（§7.2）：只是文案，不改变谁响。
+  test('闹钟正文带「接下来」：3 小时内其他开着闹钟的时点提醒', () async {
+    await startDispatcher();
+    final a = await svc.createTask(
+      title: '例会',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 19, 0),
+    );
+    await svc.setTaskAlarm(a.id, enabled: true);
+    final b = await svc.createTask(
+      title: '复盘',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 20, 30),
+    );
+    await svc.setTaskAlarm(b.id, enabled: true);
+    final c = await svc.createTask(
+      title: '夜跑',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 23, 0),
+    );
+    await svc.setTaskAlarm(c.id, enabled: true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(alarm.taskId, a.id, reason: '下一站是最早的那件');
+    expect(alarm.draft!.body, contains('接下来：复盘 20:30'));
+    expect(alarm.draft!.body, isNot(contains('夜跑')),
+        reason: '超出 3 小时的不列，免得清单变成一整天');
+  });
+
+  test('同一分钟的几件：第一个的正文并排列出其余件', () async {
+    await startDispatcher();
+    final a = await svc.createTask(
+      title: '例会',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 19, 0),
+    );
+    await svc.setTaskAlarm(a.id, enabled: true);
+    final b = await svc.createTask(
+      title: '站会',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 19, 0),
+    );
+    await svc.setTaskAlarm(b.id, enabled: true);
+    await Future<void>.delayed(Duration.zero);
+
+    final draft = alarm.draft!;
+    final other = draft.taskId == a.id ? '站会' : '例会';
+    expect(draft.channel, ReminderChannel.alarm);
+    expect(draft.body, contains('同时还有：$other'));
+
+    now = DateTime(2026, 10, 7, 19, 0);
+    alarm.fire();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(notifications.shownList, isNotEmpty);
+    expect(notifications.shownList.first.channel, ReminderChannel.alarm,
+        reason: '第一件起全屏响铃');
+
+    // 同一分钟的第二件：通知照发，但降级成普通渠道，不叠第二股铃声。
+    alarm.fire();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(notifications.shownList.last.channel, ReminderChannel.ring,
+        reason: '本分钟已经起过闹钟，这一件只在普通通知里留一条');
+  });
 }

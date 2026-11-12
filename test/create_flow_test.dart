@@ -97,7 +97,8 @@ void main() {
     expect(task.deadline!.day, DateTime.now().day);
     expect(task.isLongTerm, isFalse, reason: '有截止 → 按时长，缺省 30 分钟');
     expect(task.estimatedWork, 30);
-    expect(task.ringEnabled, isTrue, reason: '新建的『响铃』默认打开（§7.0）');
+    expect(task.alarmEnabled, isFalse,
+        reason: '新建的『闹钟』默认关：普通提醒本来就有声（§7.0）');
   });
 
   testWidgets('切『开始型』：时刻跟着换成 12:00，日期不动', (tester) async {
@@ -128,8 +129,9 @@ void main() {
   });
 
   // 问多少由档位与开关决定（§5.1 / §7.0）：新建表单按档位裁行，重要度另看
-  // 『问重要度』。『响铃』不在裁剪之列——它管声音，不管发不发，两档都摆。
-  testWidgets('无排序档只问标题和日期：工时与重要度不出现，响铃照摆', (tester) async {
+  // 『问重要度』。『闹钟』按"这件会不会走到时点提醒"裁：开始型一直摆，截止型
+  // 只在无排序档摆（标准档的截止型走软提醒，开了也没处用）。
+  testWidgets('无排序档只问标题和日期：工时与重要度不出现，闹钟照摆', (tester) async {
     await pumpShell(tester); // 新装默认 = 无排序
     await openCreateFlow(tester);
     await tester.tap(dayCell(DateTime.now()));
@@ -137,10 +139,10 @@ void main() {
 
     expect(find.text('工作强度'), findsNothing);
     expect(find.text('重要度'), findsNothing);
-    expect(find.text('响铃'), findsOneWidget);
+    expect(find.text('闹钟'), findsOneWidget);
   });
 
-  testWidgets('标准档多问工时；『问重要度』默认关，仍不问', (tester) async {
+  testWidgets('标准档多问工时；截止型不摆闹钟（走软提醒）', (tester) async {
     await pumpShell(tester, mode: ScheduleMode.standard);
     await openCreateFlow(tester);
     await tester.tap(dayCell(DateTime.now()));
@@ -148,10 +150,23 @@ void main() {
 
     expect(find.text('工作强度'), findsOneWidget);
     expect(find.text('重要度'), findsNothing);
-    expect(find.text('响铃'), findsOneWidget);
+    expect(find.text('闹钟'), findsNothing,
+        reason: '标准档的截止型走软提醒，闹钟只能给时点提醒');
   });
 
-  testWidgets('打开『问重要度』才问；响铃照摆', (tester) async {
+  testWidgets('标准档切开始型：闹钟那一行出现', (tester) async {
+    await pumpShell(tester, mode: ScheduleMode.standard);
+    await openCreateFlow(tester);
+    await tester.tap(dayCell(DateTime.now()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('闹钟'), findsNothing);
+    await tester.tap(find.text('开始型'));
+    await tester.pumpAndSettle();
+    expect(find.text('闹钟'), findsOneWidget, reason: '开始型到点是时点提醒');
+  });
+
+  testWidgets('打开『问重要度』才问；截止型仍不摆闹钟', (tester) async {
     await pumpShell(tester, mode: ScheduleMode.standard, askImportance: true);
     await openCreateFlow(tester);
     await tester.tap(dayCell(DateTime.now()));
@@ -159,7 +174,7 @@ void main() {
 
     expect(find.text('工作强度'), findsOneWidget);
     expect(find.text('重要度'), findsOneWidget);
-    expect(find.text('响铃'), findsOneWidget);
+    expect(find.text('闹钟'), findsNothing);
   });
 
   testWidgets('『改日期』退回月历，已选那天保持高亮', (tester) async {

@@ -131,17 +131,22 @@ void main() {
   // ---------- 不筛提醒：锚点全给，响不响看任务自己 ----------
 
   group('提醒一律产出（门槛已取消）', () {
-    test('ringEnabled 只看 metadata remind；规则设了响不改变它', () {
+    test('alarmEnabled 只看 metadata alarm；规则设了响不改变它', () {
       final plain = task(id: 'p', deadline: wed(18, 0));
-      final ringing =
-          task(id: 'q', deadline: wed(18, 0), metadata: {'remind': 'true'});
+      final armed =
+          task(id: 'q', deadline: wed(18, 0), metadata: {'alarm': 'true'});
       final routine = task(id: 'r',
           deadline: wed(18, 0), metadata: {'routine_remind': 'true'});
 
-      expect(plain.ringEnabled, isFalse, reason: '缺键 = 静音');
-      expect(ringing.ringEnabled, isTrue);
-      expect(routine.ringEnabled, isFalse,
-          reason: '周期规则的"响"是"要不要提醒"，不是"响不响铃"');
+      expect(plain.alarmEnabled, isFalse, reason: '缺键 = 不开闹钟');
+      expect(armed.alarmEnabled, isTrue);
+      expect(routine.alarmEnabled, isFalse,
+          reason: '周期规则的"响"是"要不要提醒"，不是"要不要闹钟"');
+
+      final legacy =
+          task(id: 's', deadline: wed(18, 0), metadata: {'remind': 'true'});
+      expect(legacy.alarmEnabled, isFalse,
+          reason: '旧键 remind 已退役：有声/静音不再被读成要不要闹钟');
     });
 
     test('默认就算下一站：没有"只排列不提醒"的模式', () {
@@ -158,7 +163,7 @@ void main() {
       expect(r.nextReminderTaskId, 'a');
     });
 
-    test('两件都有锚点：下一站取最早的那个，响铃标记不参与', () {
+    test('两件都有锚点：下一站取最早的那个，闹钟标记不参与', () {
       final r = scheduler.schedule(
         tasks: [
           task(id: 'a', deadline: wed(18, 0)), // 锚点 16:30

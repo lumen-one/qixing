@@ -110,8 +110,9 @@ class AppController extends ChangeNotifier {
   /// 装配点注入的回调：通知时间段变化时同步给 ReminderDispatcher（§4.3）。
   final void Function(NotificationWindowRule rule)? onWindowsChanged;
 
-  /// 装配点注入的回调：闹钟模式变化时同步给 ReminderDispatcher（决议 18）。
-  final void Function(bool alarmMode)? onAlarmModeChanged;
+  /// 装配点注入的回调：响铃时长变化时同步给 ReminderDispatcher（§7.2）。
+  /// 『新任务默认开闹钟』不走这里——它只影响新建表单的初值，不碰已挂的闹钟。
+  final void Function(int seconds)? onRingSecondsChanged;
 
   /// 装配点注入的回调：调度模式（标准 / 无排序）变化时同步给 TaskService
   /// （v1.9 / D15 / 决议 43）。它改的是调度入参与查询口径——重锚之后
@@ -871,7 +872,7 @@ class AppController extends ChangeNotifier {
     this.folderPicker,
     this.caps = ShellCapabilities.overlayShell,
     this.onWindowsChanged,
-    this.onAlarmModeChanged,
+    this.onRingSecondsChanged,
     this.onScheduleModeChanged,
     this.onWorkRuleChanged,
     Stream<ShownNotification>? notificationSurface,
@@ -956,7 +957,9 @@ class AppController extends ChangeNotifier {
       // 设置写盘失败：内存态继续生效，下次保存再试
     }
     onWindowsChanged?.call(notificationWindowRule);
-    onAlarmModeChanged?.call(next.alarmMode);
+    if (next.alarmRingSeconds != previous.alarmRingSeconds) {
+      onRingSecondsChanged?.call(next.alarmRingSeconds);
+    }
     onScheduleModeChanged?.call(next.scheduleMode);
     // 『问重要度』改的是排序乘数：交给 service 重算一次（不动任何任务数据）。
     if (next.askImportance != previous.askImportance) {
@@ -1610,9 +1613,9 @@ class AppController extends ChangeNotifier {
 
   Future<void> pinToTop(String id) => service.pinToTop(id);
 
-  /// 逐任务提醒开关（v0.9 决议 38）：标准模式下让这一件出声。
-  Future<void> setTaskReminder(String id, {required bool enabled}) =>
-      service.setTaskReminder(id, enabled: enabled);
+  /// 逐任务闹钟开关（§7.0）：这一件的时点提醒要不要升级成全屏持续响铃。
+  Future<void> setTaskAlarm(String id, {required bool enabled}) =>
+      service.setTaskAlarm(id, enabled: enabled);
 
   Future<void> pickForToday(String id) => service.pickForToday(id);
 

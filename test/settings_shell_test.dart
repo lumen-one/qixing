@@ -47,17 +47,18 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  /// 只对悬浮壳有意义的那六行（§9 开头那张表）。
+  /// 只对悬浮壳有意义的那几行（§9 开头那张表）。
   const overlayOnly = [
     '权限引导',
     '固定把手位置',
     '固定侧边栏大小',
     '把手热区宽度',
     '重看首次引导',
-    '闹钟模式',
+    '新任务默认开闹钟',
+    '响铃时长',
   ];
 
-  testWidgets('桌面壳：这六行整行不渲染（不是灰掉）', (tester) async {
+  testWidgets('桌面壳：这几行整行不渲染（不是灰掉）', (tester) async {
     await pumpSettings(tester, caps: ShellCapabilities.plainWindow);
 
     for (final label in overlayOnly) {
@@ -92,7 +93,7 @@ void main() {
     expect(find.text('灵感'), findsWidgets);
   });
 
-  testWidgets('悬浮壳：六行都在，副标题仍是"拖动把手展开"', (tester) async {
+  testWidgets('悬浮壳：这几行都在，副标题仍是"拖动把手展开"', (tester) async {
     await pumpSettings(tester, caps: ShellCapabilities.overlayShell);
 
     for (final label in overlayOnly) {

@@ -555,20 +555,20 @@ class TaskService {
     return updated;
   }
 
-  /// **逐任务响铃开关**（界面上的『响铃』）：写 metadata `remind`。提醒照发，它只
-  /// 决定这条提醒走有声渠道还是静音渠道——**不改顺序、不改时刻**，三档一样。
-  Future<Task> setTaskReminder(String id,
+  /// **逐任务闹钟开关**（界面上的『闹钟』）：写 metadata `alarm`。提醒照发，它只
+  /// 决定这条**时点提醒**要不要升级成全屏 + 持续响铃——**不改顺序、不改时刻**。
+  Future<Task> setTaskAlarm(String id,
       {required bool enabled, EventOrigin origin = EventOrigin.user}) async {
     final updated = _withMeta(_require(id), (m) {
       final next = Map<String, String>.from(m);
       if (enabled) {
-        next['remind'] = 'true';
+        next['alarm'] = 'true';
       } else {
-        next.remove('remind');
+        next.remove('alarm');
       }
       return next;
     });
-    await _persist(updated, origin, DomainEventType.taskReminderSet);
+    await _persist(updated, origin, DomainEventType.taskAlarmSet);
     return updated;
   }
 

@@ -14,7 +14,7 @@ enum DomainEventType {
   taskPicked,     // 挑到今日（散件附今日尾部；决议 8/13）
   taskRestored,   // 软删除恢复（D11）
   trashPurged,    // 清空回收站（D11）
-  taskReminderSet, // 逐任务提醒开关（v1.9 决议 38：标准模式下让这一件出声）
+  taskAlarmSet, // 逐任务闹钟开关（这一件要不要从普通提醒升级成全屏闹钟）
   manualOrderChanged, // 手动序改写（v1.12 决议 43：无排序模式下的拖动定序）
   poolOrderChanged,   // 池子整理序整段改写（决议 14：一次拖动批量落盘）
   taskInProgressSet,  // 挂起进行开关 / 挂起组整段重写（v1.18 决议 47：长期任务顶置今日页）

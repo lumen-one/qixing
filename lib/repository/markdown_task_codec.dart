@@ -40,7 +40,8 @@ class MarkdownTaskCodec implements TaskCodec {
     'routine_skipped',   // 跳过的那一天 yyyy-MM-dd（决议 23）
     'point_fired',       // 已响过的那一次时点提醒（只到点响一次）
     'time_slack',        // 时间裕度（决议 36；旧格式里也认这个键）
-    'remind',            // 逐任务提醒开关（v1.9 决议 38：标准模式下让这一件出声）
+    'alarm',             // 逐任务闹钟开关（时点提醒升级成全屏持续响铃）
+    'remind',            // 历史键：旧版的『响铃』（有声/静音），已退役、不读也不删
     'manual_order',      // 手动序（v1.12 决议 43 / D17：无排序模式下的显示序）
     'in_progress',       // 挂起进行标记（v1.18 决议 47：长期任务顶置今日页，值 = 挂起时刻）
     'in_progress_daily', // 每日回挂标记（决议 47：值 = 最近一次"今天做过"的日期）

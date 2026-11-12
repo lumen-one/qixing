@@ -55,7 +55,7 @@ class _EditTaskSheetState extends State<_EditTaskSheet> {
     deadline: widget.task.deadline,
     longTerm: widget.task.isLongTerm,
     importance: widget.task.importance ?? 3,
-    remind: widget.task.ringEnabled,
+    alarm: widget.task.alarmEnabled,
   );
 
   @override
@@ -99,9 +99,11 @@ class _EditTaskSheetState extends State<_EditTaskSheet> {
       );
       return;
     }
-    // 响铃是独立的持久意图（metadata `remind`），只在真的变了时写一次。
-    if (_value.remind != task.ringEnabled) {
-      await widget.controller.setTaskReminder(task.id, enabled: _value.remind);
+    // 闹钟是独立的持久意图（metadata `alarm`），只在真的变了时写一次。
+    // 这一行在"标准档的截止型"上不显示，那种情况按原值回写等于没改。
+    if (_value.alarmRowVisible(manualSort: widget.controller.isManualSort) &&
+        _value.alarm != task.alarmEnabled) {
+      await widget.controller.setTaskAlarm(task.id, enabled: _value.alarm);
     }
     if (mounted) Navigator.of(context).pop();
   }
@@ -136,6 +138,7 @@ class _EditTaskSheetState extends State<_EditTaskSheet> {
             // 顺序的滑块就是骗人。
             showImportance: widget.controller.askImportance &&
                 !widget.controller.isManualSort,
+            manualSort: widget.controller.isManualSort,
             deadlineActions: [
               TextButton(
                 onPressed: _pickDeadline,

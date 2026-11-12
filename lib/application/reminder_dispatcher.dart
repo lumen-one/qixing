@@ -21,15 +21,15 @@ import 'task_service.dart';
 /// 三个提醒源：
 /// - **Slack 软提醒**（截止型任务）：经 [windows] 送达策略（段外顺延到下一段开头）；
 /// - **时点性提醒**（开始型到点 + 设了响的周期实例 + 无排序档的两站）：原样响，
-///   不受静默段限制；[alarmMode] 打开时升级为闹钟渠道（全屏 + 持续响铃），
-///   覆盖掉它本该走的那条通知栏投递；
-/// - **编排条目**（`编排.md` 里有时间的一行）：准点发一条静音消息，没有按钮、不进
-///   闹钟模式、不套送达策略——它说的是"到我打算动手的点了"，不是催办
+///   不受静默段限制；任务自己的 metadata `alarm` 打开时升级为闹钟渠道
+///   （全屏 + 持续响铃），覆盖掉它本该走的那条通知栏投递；
+/// - **编排条目**（`编排.md` 里有时间的一行）：准点发一条静音消息，没有按钮、不升级
+///   成闹钟、不套送达策略——它说的是"到我打算动手的点了"，不是催办
 ///   （决定卡 2026-10-29-plan-reminder）。
 ///
 /// **渠道只看两件事**：这条是不是时点提醒（能不能升级成闹钟）+ 任务自己的
-/// metadata `remind`（有声 / 静音）。调度模式不参与——三档都提醒。编排条目例外：
-/// 它恒静音，没有『响铃』这一档。
+/// metadata `alarm`。调度模式不参与——两档都提醒。普通提醒一律有声（通知栏 +
+/// 横幅 + 提示音 + 震动）；只有编排条目恒静音。
 class ReminderDispatcher {
   final TaskService service;
   final AlarmPort alarm;
@@ -41,8 +41,16 @@ class ReminderDispatcher {
   /// 通知时间段（设置页编辑后经装配点同步，§4.3）。
   NotificationWindowRule windows;
 
-  /// 闹钟模式（决议 18：只对时点性提醒生效；截止型的 Slack 软提醒永远普通通知）。
-  bool alarmMode;
+  /// 持续响铃通道（§7.2）。null = 这套壳没有它（桌面 / 测试）：只投通知、不起铃。
+  final AlarmRingPort? ring;
+
+  /// 响铃时长（秒）：设置项 `alarm_ring_seconds` 由装配点推进来，起铃那一刻才读。
+  int ringSeconds;
+
+  /// 本分钟已经起过闹钟的那一分钟，以及那条正文里已经列过的任务。
+  /// 同一分钟的后来者只留普通通知——全屏页同一刻只能有一个抢到前台。
+  DateTime? _alarmMinute;
+  Set<String> _alarmCovered = const {};
 
   static const List<NotificationAction> defaultActions = [
     NotificationAction(id: 'done', label: '完成'),
@@ -61,8 +69,9 @@ class ReminderDispatcher {
     required this.alarm,
     required this.notifications,
     this.plans,
+    this.ring,
     this.windows = NotificationWindowRule.defaultRule,
-    this.alarmMode = false,
+    this.ringSeconds = 60,
   });
 
   /// 设置页改了送达策略：换规则并按新规则重挂下一站闹钟。
@@ -71,11 +80,8 @@ class ReminderDispatcher {
     await _reschedule();
   }
 
-  /// 设置页改了闹钟模式：重挂下一站闹钟（渠道与全屏随之改变）。
-  Future<void> updateAlarmMode(bool enabled) async {
-    alarmMode = enabled;
-    await _reschedule();
-  }
+  /// 设置页改了响铃时长：不重挂闹钟——它在起铃那一刻才读，改完下一次就生效。
+  void updateRingSeconds(int seconds) => ringSeconds = seconds;
 
   Future<void> start() async {
     _events ??= service.events.listen((e) {
@@ -138,20 +144,24 @@ class ReminderDispatcher {
 
     final station = _planStation;
     final task = station == null ? service.byId(taskId) : null;
-    final fullScreen = pointFired && alarmMode;
-    final channel =
-        station != null ? ReminderChannel.silent : _channelFor(task, point: pointFired);
+    final channel = station != null
+        ? ReminderChannel.silent
+        : _channelFor(task, point: pointFired);
+    final alarmOn = channel == ReminderChannel.alarm;
     // 挂闹钟时就把"到点要交付什么"定下来：安卓应用被杀时由系统闹钟
-    // 自己弹通知（原生接收器照着这份草案渲染）。
+    // 自己弹通知（原生接收器照着这份草案渲染）。闹钟的正文此刻就要带上
+    // "接下来"与"同时还有"——到点那一刻应用可能已经不在了。
     await alarm.scheduleNext(
       at,
       taskId,
       draft: ReminderDraft(
         taskId: taskId,
         title: station?.title ?? task?.title ?? '该做这件事了',
-        body: station == null ? _bodyOf(task) : _planBody(station),
+        body: station == null
+            ? _bodyFor(task, alarm: alarmOn, at: at)
+            : _planBody(station),
         channel: channel,
-        fullScreen: fullScreen,
+        fullScreen: alarmOn,
         actions: station == null ? defaultActions : const [],
       ),
     );
@@ -183,20 +193,33 @@ class ReminderDispatcher {
 
   Future<void> _showTask(ReminderEvent event) async {
     final point = event.kind == ReminderKind.point;
-    final fullScreen = point && alarmMode;
     final task = service.byId(event.taskId);
-    final channel = _channelFor(task, point: point);
+    var channel = _channelFor(task, point: point);
+    final now = service.now();
+    if (channel == ReminderChannel.alarm) {
+      final minute = DateTime(now.year, now.month, now.day, now.hour, now.minute);
+      if (_alarmMinute == minute && _alarmCovered.contains(event.taskId)) {
+        // 本分钟已经起过闹钟，这一件已在上一页的正文里露过面：只留普通通知。
+        // 不影响它自己的 point_fired 与下一站。
+        channel = ReminderChannel.ring;
+      } else {
+        _alarmMinute = minute;
+        _alarmCovered = _sameMinuteAlarmIds(task, at: now);
+        await ring?.start(event.taskId, seconds: ringSeconds);
+      }
+    }
+    final alarmOn = channel == ReminderChannel.alarm;
     await notifications.show(
       event,
       actions: defaultActions,
       channel: channel,
-      fullScreen: fullScreen,
+      fullScreen: alarmOn,
       draft: ReminderDraft(
         taskId: event.taskId,
         title: task?.title ?? '该做这件事了',
-        body: _bodyOf(task),
+        body: _bodyFor(task, alarm: alarmOn, at: now),
         channel: channel,
-        fullScreen: fullScreen,
+        fullScreen: alarmOn,
         actions: defaultActions,
       ),
     );
@@ -221,14 +244,14 @@ class ReminderDispatcher {
     );
   }
 
-  /// 一条提醒走哪个渠道：**闹钟模式只对时点提醒生效**，其余看任务自己的
-  /// 『响铃』（metadata `remind`，缺键 = 静音）。任务查不到时按静音走——
-  /// 没有主人的提醒不该吵人。
+  /// 一条提醒走哪个渠道：**只有时点提醒能升级成闹钟**，任务自己不一定要
+  /// （metadata `alarm`，缺键 = 不开）。截止型的软提醒一律普通通知。
+  /// 任务查不到时按普通提醒走——没有主人的提醒不该全屏吵人。
   ReminderChannel _channelFor(Task? task, {required bool point}) {
-    if (point && alarmMode) return ReminderChannel.alarm;
-    return (task?.ringEnabled ?? false)
-        ? ReminderChannel.ring
-        : ReminderChannel.silent;
+    if (!point) return ReminderChannel.ring;
+    return (task?.alarmEnabled ?? false)
+        ? ReminderChannel.alarm
+        : ReminderChannel.ring;
   }
 
   String? _bodyOf(Task? task) {
@@ -252,6 +275,74 @@ class ReminderDispatcher {
       return task.type == TaskType.fixed ? '开始 ${_fmt(d)}' : '到点 ${_fmt(d)}';
     }
     return null;
+  }
+
+  /// 闹钟正文：基础正文后面追两段（§7.2）。两段都只是文案，不参与排站、
+  /// 不改变谁响——后面的件到点仍各自响各自的闹钟。
+  String? _bodyFor(Task? task, {required bool alarm, required DateTime at}) {
+    final base = _bodyOf(task);
+    if (!alarm || task == null) return base;
+    final parts = <String>[
+      ?base,
+      ..._alarmCompanions(task, at: at),
+    ];
+    return parts.isEmpty ? base : parts.join('\n');
+  }
+
+  /// 同时还有什么 / 接下来还有什么。
+  ///
+  /// 同一分钟的并排列出：全屏页同一刻只能有一个，先到的那个负责把同刻的几件
+  /// 报全。3 小时内但不同刻的排在"接下来"，最多 3 条，超出只报件数。
+  List<String> _alarmCompanions(Task self, {required DateTime at}) {
+    final minute =
+        DateTime(at.year, at.month, at.day, at.hour, at.minute);
+    final until = at.add(const Duration(hours: 3));
+    final sameMinute = <String>[];
+    final upcoming = <({Task task, DateTime at})>[];
+    for (final t in service.tasks) {
+      if (t.id == self.id || !t.alarmEnabled) continue;
+      final when = t.pointReminderAt;
+      if (when == null) continue;
+      if (DateTime(when.year, when.month, when.day, when.hour, when.minute) ==
+          minute) {
+        sameMinute.add(t.title);
+      } else if (when.isAfter(at) && !when.isAfter(until)) {
+        upcoming.add((task: t, at: when));
+      }
+    }
+    final out = <String>[];
+    if (sameMinute.isNotEmpty) {
+      out.add('同时还有：${sameMinute.join('、')}');
+    }
+    if (upcoming.isNotEmpty) {
+      upcoming.sort((a, b) => a.at.compareTo(b.at));
+      final shown = upcoming
+          .take(3)
+          .map((e) => '${e.task.title} ${_two(e.at.hour)}:${_two(e.at.minute)}')
+          .join('、');
+      final more = upcoming.length > 3 ? '，等 ${upcoming.length} 件' : '';
+      out.add('接下来：$shown$more');
+    }
+    return out;
+  }
+
+  /// 本分钟里所有开着闹钟的时点提醒。第一条起铃时记下它们，后面同一分钟的
+  /// 事件就只留普通通知——不再起第二个全屏页、不叠第二股铃声。
+  Set<String> _sameMinuteAlarmIds(Task? self, {required DateTime at}) {
+    final minute =
+        DateTime(at.year, at.month, at.day, at.hour, at.minute);
+    final ids = <String>{};
+    for (final t in service.tasks) {
+      if (!t.alarmEnabled) continue;
+      final when = t.pointReminderAt;
+      if (when == null) continue;
+      if (DateTime(when.year, when.month, when.day, when.hour, when.minute) ==
+          minute) {
+        ids.add(t.id);
+      }
+    }
+    if (self != null) ids.add(self.id);
+    return ids;
   }
 
   /// 编排条目的正文：只报"哪天几点"，不写"剩余"这一类调度量（条目没有工时）。

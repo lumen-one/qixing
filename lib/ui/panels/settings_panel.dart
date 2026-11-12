@@ -310,16 +310,26 @@ class _SettingsPanelState extends State<SettingsPanel> {
           title: Text('AI 编排'),
           subtitle: Text('以后在这儿：记住你的习惯、自动估工时、语音改清单'),
         ),
-        // 全屏闹钟是安卓的通知渠道；桌面到点只有应用内弹窗（§7.2）。
-        // 它**覆盖**那一条本该走的通知栏投递，其余提醒照旧横幅 + 通知栏。
-        if (_c.caps.alarmChannel)
+        // 闹钟是安卓的通知渠道；桌面到点只有应用内弹窗（§7.2）。
+        // 这一段只管**新建的初值**与**响多久**——已有任务逐条改自己那颗开关，
+        // 打开哪一件就闹哪一件。
+        if (_c.caps.alarmChannel) ...[
           SwitchListTile(
             secondary: const Icon(Icons.alarm),
-            title: const Text('闹钟模式'),
-            subtitle: const Text('开始型到点用全屏闹钟覆盖通知栏；其余一律通知栏 + 横幅'),
-            value: s.alarmMode,
-            onChanged: (v) => _c.updateSettings(s.copyWith(alarmMode: v)),
+            title: const Text('新任务默认开闹钟'),
+            subtitle: const Text('只影响新建；已有任务逐条改。普通提醒本来就有声'),
+            value: s.defaultTaskAlarm,
+            onChanged: (v) =>
+                _c.updateSettings(s.copyWith(defaultTaskAlarm: v)),
           ),
+          ListTile(
+            leading: const Icon(Icons.timer_outlined),
+            title: const Text('响铃时长'),
+            subtitle: Text('到点响 ${s.alarmRingSeconds} 秒后自动停，也可以手动停'),
+            trailing: const Icon(Icons.edit_outlined),
+            onTap: () => _pickAlarmRingSeconds(s),
+          ),
+        ],
         ListTile(
           leading: const Icon(Icons.timelapse),
           title: const Text('通知时间段（截止型任务）'),
@@ -332,6 +342,27 @@ class _SettingsPanelState extends State<SettingsPanel> {
           onTap: () => showSettingsWindowsDialog(context, _c),
         ),
       ];
+
+  /// 响铃时长：三档够用，不做滑条——多一个连续旋钮就多一处"调到 47 秒有什么
+  /// 区别"的疑问。
+  Future<void> _pickAlarmRingSeconds(AppSettings s) async {
+    const options = [30, 60, 120];
+    final picked = await showDialog<int>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('响铃时长'),
+        children: [
+          for (final sec in options)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(ctx).pop(sec),
+              child: Text(sec < 60 ? '$sec 秒' : '${sec ~/ 60} 分钟'),
+            ),
+        ],
+      ),
+    );
+    if (picked == null) return;
+    await _c.updateSettings(s.copyWith(alarmRingSeconds: picked));
+  }
 
   List<Widget> _workTimeSection(AppSettings s) => [
         ListTile(

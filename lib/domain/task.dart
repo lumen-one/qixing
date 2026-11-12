@@ -104,12 +104,12 @@ class Task {
   /// 规则是否设了响（决议 18：时点性提醒，到点走系统闹钟）。
   bool get routineRemind => metadata['routine_remind'] == 'true';
 
-  /// **逐任务响铃开关**（metadata `remind`，界面上的『响铃』）：提醒照发，它只决定
-  /// 这条提醒走有声渠道还是静音渠道，不改顺序、不改提醒时刻。
+  /// **逐任务闹钟开关**（metadata `alarm`，界面上的『闹钟』）：提醒照发，它只决定
+  /// 这条**时点提醒**要不要升级成全屏 + 持续响铃，不改顺序、不改提醒时刻。
   ///
-  /// **缺键 = 静音**：旧版本只在人主动开提醒时才写 `true`，那个意图就照静音延续；
-  /// 静音只是没声音，横幅与通知栏照旧（§3.2 规则 B4）。
-  bool get ringEnabled => metadata['remind'] == 'true';
+  /// **缺键 = 不开**：普通提醒照发，有提示音与横幅。旧键 `remind`（有声/静音）
+  /// 已退役，读也不读——同名复用会把它误读成"要闹钟"（§3.2 规则 B4）。
+  bool get alarmEnabled => metadata['alarm'] == 'true';
 
   /// 跳过标记（决议 23「跳过今天」）：值 = 被跳过的发生日 yyyy-MM-dd。
   String? get routineSkippedDate => metadata['routine_skipped'];

@@ -75,7 +75,8 @@ class TaskSidecarCodec {
     'routine_remind',
     'routine_skipped',
     'point_fired',
-    'remind', // v1.9：逐任务提醒开关（标准模式下让这一件出声，决议 38）
+    'alarm', // 逐任务闹钟开关（这一件要不要升级成全屏持续响铃）
+    'remind', // 历史键：旧版的『响铃』（有声/静音），已退役、读也不读，不删不改
     'manual_order', // v1.12：手动序（无排序模式下的显示序，决议 43 / D17）
     'in_progress', // v1.18：挂起进行标记（长期任务顶置今日页，决议 47 / D19）
     'in_progress_daily', // 决议 47：每日回挂标记（值 = 最近一次"今天做过"的日期）

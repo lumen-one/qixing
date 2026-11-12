@@ -54,7 +54,9 @@ class _CreateFlowSheetState extends State<_CreateFlowSheet> {
 
   /// true = 第 1 页（挑日期），false = 第 2 页（填内容）。
   bool _pickingWhen = true;
-  TaskFormValue _value = const TaskFormValue();
+  // 初值读设置里的『新任务默认开闹钟』——默认是关（普通提醒本来就响）。
+  late TaskFormValue _value =
+      TaskFormValue(alarm: widget.controller.settings.defaultTaskAlarm);
   bool _saving = false;
 
   /// 月历上高亮的那天（回第 1 页时保持选中，选的是哪天一目了然）。
@@ -122,9 +124,11 @@ class _CreateFlowSheetState extends State<_CreateFlowSheet> {
         importance: _value.importance,
         description: _noteCtrl.text,
       );
-      // 散件永不提醒（§7.0），别给它留一个没有意义的标记——表单默认是开着的。
-      if (_value.remind && !_value.isLoose) {
-        await widget.controller.setTaskReminder(task.id, enabled: true);
+      // 散件永不提醒（§7.0），标准档的截止型走软提醒（不摆那一行）——两种情况
+      // 都别留一个用不上的标记。
+      if (_value.alarm &&
+          _value.alarmRowVisible(manualSort: widget.controller.isManualSort)) {
+        await widget.controller.setTaskAlarm(task.id, enabled: true);
       }
     } catch (e) {
       if (!mounted) return;
@@ -223,7 +227,7 @@ class _CreateFlowSheetState extends State<_CreateFlowSheet> {
   Widget _buildFormPage(ThemeData theme) {
     // 问多少由档位与开关决定（§5.1）：无排序档只问标题和日期，标准档多问工时，
     // 重要度看设置里的『问重要度』（关掉时整个维度不参与，表单里就没有这一行）。
-    // 『响铃』不在裁剪之列——提醒一律会发，它只是声音开关。
+    // 『闹钟』不按档裁，按"这件会不会走到时点提醒"裁（见 alarmRowVisible）。
     final mode = widget.controller.scheduleMode;
     // 键盘起来后弹窗高度会缩：字段多的时候要能滚，别把『创建』挤出去。
     return SingleChildScrollView(
@@ -244,6 +248,7 @@ class _CreateFlowSheetState extends State<_CreateFlowSheet> {
             onEditTime: _pickTime,
             showWorkStrength: !mode.isManual,
             showImportance: widget.controller.askImportance,
+            manualSort: mode.isManual,
             deadlineActions: [
               TextButton(
                 onPressed: () => setState(() => _pickingWhen = true),

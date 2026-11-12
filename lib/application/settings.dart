@@ -83,6 +83,18 @@ int clampManualLeadMinutes(Object? raw) {
   return raw.toInt().clamp(minManualLeadMinutes, maxManualLeadMinutes).toInt();
 }
 
+/// **闹钟响铃时长**（秒，§7.2）：到点自动停声的上限，也是"能手动停"之外的兜底。
+/// 一分钟够把人从别的事里拽回来，又不至于在没人的房间里一直响。
+const int minAlarmRingSeconds = 15;
+const int defaultAlarmRingSeconds = 60;
+const int maxAlarmRingSeconds = 300;
+
+/// 响铃时长：缺字段 / 手改坏了都回默认，其余夹进区间。
+int clampAlarmRingSeconds(Object? raw) {
+  if (raw is! num) return defaultAlarmRingSeconds;
+  return raw.toInt().clamp(minAlarmRingSeconds, maxAlarmRingSeconds).toInt();
+}
+
 /// 侧边栏宽高的**安装默认值**（逻辑像素）：窄栏那一档——页内容本来就是单列，
 /// 再宽只是把空白摊开。两个值都给成数字而不是公式，是因为用户拖到哪儿就是哪儿
 /// （口径见 ui-interaction.md §6.0 / §9 第 11 条），没有"随屏宽按比例变"这一层。
@@ -131,8 +143,13 @@ class AppSettings {
   /// 读取时夹在 [minManualLeadMinutes, maxManualLeadMinutes] 之间。
   final int manualLeadMinutes;
 
-  /// 可选闹钟模式（决议 3/18）：只对时点性提醒生效。
-  final bool alarmMode;
+  /// **新任务默认开闹钟**：只决定创建表单里那颗开关的初值，已有任务不回溯。
+  /// 落 settings.json 的 `default_task_alarm`；旧文件里的 `alarm_mode` 是它的前身
+  /// （以前是全局闹钟模式），读不到新键时按旧键的意图延续。
+  final bool defaultTaskAlarm;
+
+  /// 闹钟响铃时长（秒）：落 `alarm_ring_seconds`，缺键 = [defaultAlarmRingSeconds]。
+  final int alarmRingSeconds;
 
   /// 定期挑开关与间隔天数（决议 8，默认一天）。
   final bool pickEnabled;
@@ -222,7 +239,8 @@ class AppSettings {
     this.scheduleMode = ScheduleMode.manual,
     this.askImportance = false,
     this.manualLeadMinutes = defaultManualLeadMinutes,
-    this.alarmMode = false,
+    this.defaultTaskAlarm = false,
+    this.alarmRingSeconds = defaultAlarmRingSeconds,
     this.pickEnabled = false,
     this.pickIntervalDays = 1,
     this.notesPath,
@@ -248,7 +266,8 @@ class AppSettings {
     ScheduleMode? scheduleMode,
     bool? askImportance,
     int? manualLeadMinutes,
-    bool? alarmMode,
+    bool? defaultTaskAlarm,
+    int? alarmRingSeconds,
     bool? pickEnabled,
     int? pickIntervalDays,
     String? notesPath,
@@ -273,7 +292,8 @@ class AppSettings {
       scheduleMode: scheduleMode ?? this.scheduleMode,
       askImportance: askImportance ?? this.askImportance,
       manualLeadMinutes: manualLeadMinutes ?? this.manualLeadMinutes,
-      alarmMode: alarmMode ?? this.alarmMode,
+      defaultTaskAlarm: defaultTaskAlarm ?? this.defaultTaskAlarm,
+      alarmRingSeconds: alarmRingSeconds ?? this.alarmRingSeconds,
       pickEnabled: pickEnabled ?? this.pickEnabled,
       pickIntervalDays: pickIntervalDays ?? this.pickIntervalDays,
       notesPath: clearNotesPath ? null : (notesPath ?? this.notesPath),
@@ -307,7 +327,8 @@ class AppSettings {
         'schedule_mode': scheduleMode.name,
         'ask_importance': askImportance,
         'manual_lead_minutes': manualLeadMinutes,
-        'alarm_mode': alarmMode,
+        'default_task_alarm': defaultTaskAlarm,
+        'alarm_ring_seconds': alarmRingSeconds,
         'pick_enabled': pickEnabled,
         'pick_interval_days': pickIntervalDays,
         if (notesPath != null) 'notes_path': notesPath,
@@ -345,7 +366,12 @@ class AppSettings {
           ? json['ask_importance'] == true
           : legacyFull,
       manualLeadMinutes: clampManualLeadMinutes(json['manual_lead_minutes']),
-      alarmMode: json['alarm_mode'] == true,
+      // 旧键 `alarm_mode` 是"全局闹钟模式"；它想表达的就是"要闹钟"，降级成默认值
+      // 比丢掉这个意图更接近原意。新键优先。
+      defaultTaskAlarm: json['default_task_alarm'] is bool
+          ? json['default_task_alarm'] == true
+          : json['alarm_mode'] == true,
+      alarmRingSeconds: clampAlarmRingSeconds(json['alarm_ring_seconds']),
       pickEnabled: json['pick_enabled'] == true,
       pickIntervalDays: (json['pick_interval_days'] as num?)?.toInt() ?? 1,
       notesPath: json['notes_path'] as String?,

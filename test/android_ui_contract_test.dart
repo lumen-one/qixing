@@ -313,7 +313,8 @@ void main() {
     test('roundtrip：多段时段 + 定期挑 + 笔记路径', () {
       const s = AppSettings(
         notificationWindows: [[540, 720], [840, 1080]],
-        alarmMode: true,
+        defaultTaskAlarm: true,
+        alarmRingSeconds: 120,
         pickEnabled: true,
         pickIntervalDays: 3,
         notesPath: '/vault/疑问笔记.md',
@@ -321,7 +322,8 @@ void main() {
       );
       final back = decodeSettings(encodeSettings(s));
       expect(back.notificationWindows, s.notificationWindows);
-      expect(back.alarmMode, isTrue);
+      expect(back.defaultTaskAlarm, isTrue);
+      expect(back.alarmRingSeconds, 120);
       expect(back.pickIntervalDays, 3);
       expect(back.notesPath, s.notesPath);
     });

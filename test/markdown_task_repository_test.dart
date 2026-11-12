@@ -642,19 +642,19 @@ created: 2026-10-07T15:30
       expect(raw2, contains('pool_order: 7'));
     });
 
-    test('remind：逐任务提醒开关（v1.9）落盘、读回，关掉即删行', () async {
+    test('alarm：逐任务闹钟开关落盘、读回，关掉即删行', () async {
       final t = makeTask();
       await repo.save(t);
-      expect(kernel('task-001').readAsStringSync(), isNot(contains('remind:')));
+      expect(kernel('task-001').readAsStringSync(), isNot(contains('alarm:')));
 
-      await repo.save(t.copyWith(metadata: const {'remind': 'true'}));
-      expect(kernel('task-001').readAsStringSync(), contains('remind: true'));
-      expect((await repo.loadAll()).single.ringEnabled, isTrue,
+      await repo.save(t.copyWith(metadata: const {'alarm': 'true'}));
+      expect(kernel('task-001').readAsStringSync(), contains('alarm: true'));
+      expect((await repo.loadAll()).single.alarmEnabled, isTrue,
           reason: '漏登记这个键，开关会在命令自己的重读里蒸发');
 
       await repo.save(t);
-      expect(kernel('task-001').readAsStringSync(), isNot(contains('remind:')));
-      expect((await repo.loadAll()).single.ringEnabled, isFalse);
+      expect(kernel('task-001').readAsStringSync(), isNot(contains('alarm:')));
+      expect((await repo.loadAll()).single.alarmEnabled, isFalse);
     });
 
     test('manual_order：手动序（v1.12 决议 43）落盘、读回，换号即改行', () async {

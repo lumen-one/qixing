@@ -20,7 +20,9 @@ class TaskFormValue {
   /// 工作强度 = '长期'：不估工时、不设优先级。只在截止型时有意义。
   final bool longTerm;
   final int importance;
-  final bool remind;
+
+  /// 要不要把这条**时点提醒**升级成全屏 + 持续响铃（metadata `alarm`）。
+  final bool alarm;
 
   /// 时刻被用户手动改过：此后切类型不再把它换回默认整点。
   final bool timePinned;
@@ -32,14 +34,19 @@ class TaskFormValue {
     this.deadline,
     this.longTerm = false,
     this.importance = 3,
-    // 新建默认打开：用户"设了时间"就是想要一条提醒，不该再让他去翻一个开关。
-    // 标准/无排序两档的提醒门槛靠它放行（§7.0），关掉才安静。
-    this.remind = true,
+    // 默认关：普通提醒本来就响（通知栏 + 横幅 + 提示音），闹钟是**额外**的强度，
+    // 得由人自己加。设置页的『新任务默认开闹钟』改的只是这个初值。
+    this.alarm = false,
     this.timePinned = false,
   });
 
-  /// 「不排期」= 没有截止：只能是截止型散件，也不出声。
+  /// 「不排期」= 没有截止：只能是截止型散件，也没有提醒。
   bool get isLoose => deadline == null;
+
+  /// 『闹钟』这一行摆不摆（§4.2 / §5.1）：散件没有提醒；截止型只在无排序档
+  /// 才是时点提醒（标准档的截止型走软提醒），开始型一直是。
+  bool alarmRowVisible({required bool manualSort}) =>
+      !isLoose && (type != TaskType.flex || manualSort);
 
   TaskFormValue copyWith({
     String? title,
@@ -48,7 +55,7 @@ class TaskFormValue {
     Object? deadline = _keep,
     bool? longTerm,
     int? importance,
-    bool? remind,
+    bool? alarm,
     bool? timePinned,
   }) =>
       TaskFormValue(
@@ -59,7 +66,7 @@ class TaskFormValue {
             identical(deadline, _keep) ? this.deadline : deadline as DateTime?,
         longTerm: longTerm ?? this.longTerm,
         importance: importance ?? this.importance,
-        remind: remind ?? this.remind,
+        alarm: alarm ?? this.alarm,
         timePinned: timePinned ?? this.timePinned,
       );
 }
@@ -110,6 +117,10 @@ class TaskFormBody extends StatelessWidget {
   final bool showWorkLoad;
   final bool showImportance;
 
+  /// 当前是不是无排序档：只用来决定**截止型**要不要摆『闹钟』那一行——
+  /// 这一档的截止型走两站时点提醒，标准档的走软提醒（§4.2）。
+  final bool manualSort;
+
   const TaskFormBody({
     super.key,
     required this.value,
@@ -125,6 +136,7 @@ class TaskFormBody extends StatelessWidget {
     this.showWorkStrength = true,
     this.showWorkLoad = true,
     this.showImportance = true,
+    this.manualSort = false,
   });
 
   @override
@@ -258,21 +270,22 @@ class TaskFormBody extends StatelessWidget {
             ],
           ],
         ],
-        // 散件永远不提醒（§7.0），问"响不响铃"没有意义。
-        // **三档都摆这一行**：提醒一律会发，它管的是声音，不管发不发。
-        if (!value.isLoose)
+        // 散件永远没有提醒（§7.0），问"要不要闹钟"没有意义。
+        // **只有时点提醒能开**：开始型一直摆；截止型只在无排序档摆——标准档的
+        // 截止型走软提醒，这一行开了也没处用（§4.2）。
+        if (value.alarmRowVisible(manualSort: manualSort))
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            secondary: Icon(value.remind
-                ? Icons.volume_up_outlined
-                : Icons.volume_off_outlined),
-            title: const Text('响铃'),
+            secondary: Icon(value.alarm
+                ? Icons.alarm_on_outlined
+                : Icons.alarm_off_outlined),
+            title: const Text('闹钟'),
             subtitle: Text(
-              '提醒一律发到通知栏（带横幅）；关掉只是不出声',
+              '开着：到点全屏响铃，要手动停；关掉只是普通通知（有提示音）',
               style: theme.textTheme.bodySmall,
             ),
-            value: value.remind,
-            onChanged: (v) => onChanged(value.copyWith(remind: v)),
+            value: value.alarm,
+            onChanged: (v) => onChanged(value.copyWith(alarm: v)),
           ),
       ],
     );

@@ -90,6 +90,22 @@ abstract class NotificationPort {
   Stream<ShownNotification> get shown;
 }
 
+/// 持续响铃（§7.2）：**与通知分开的一条通道**——通知是"留在那儿的消息"，铃声是
+/// "现在就要你注意"。两者生命周期不同：通知停声后还在，铃声到点必须自己停。
+///
+/// 到 [seconds] 自停；[stop] 供全屏闹钟页与通知按钮提前停。没有这个能力的壳
+/// （桌面、测试）注入 null，分发器就只投通知、不起铃。
+abstract class AlarmRingPort {
+  /// 起铃并循环播放，[seconds] 秒后自停。重复起同一件视为续期，不叠声。
+  Future<void> start(String taskId, {required int seconds});
+
+  /// 提前停（全屏页 / 通知按钮）。没在响时是空操作。
+  Future<void> stop(String taskId);
+
+  /// 正在响的那一件；null = 没在响。全屏页据此决定要不要显示『停止响铃』。
+  String? get ringingTaskId;
+}
+
 /// 一次闹钟到点回调。
 ///
 /// [delivered] = **系统侧已经把这条提醒弹给用户了**：安卓的原生接收器照着挂

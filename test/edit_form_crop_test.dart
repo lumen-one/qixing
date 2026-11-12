@@ -75,7 +75,7 @@ void main() {
     expect(find.text('工作强度'), findsOneWidget, reason: '这一档仍能标长期');
     expect(find.text('预计工时（分钟）'), findsNothing);
     expect(find.text('重要度'), findsNothing);
-    expect(find.text('响铃'), findsOneWidget);
+    expect(find.text('闹钟'), findsOneWidget);
   });
 
   testWidgets('无排序档保存不动被藏起来的两个值', (tester) async {
@@ -101,6 +101,8 @@ void main() {
     expect(find.text('工作强度'), findsOneWidget);
     expect(find.text('预计工时（分钟）'), findsOneWidget);
     expect(find.text('重要度'), findsOneWidget);
+    expect(find.text('闹钟'), findsNothing,
+        reason: '标准档的截止型走软提醒，闹钟只能给时点提醒');
   });
 
   testWidgets('标准档关掉『问重要度』：只有工时那一行少重要度', (tester) async {

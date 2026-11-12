@@ -153,7 +153,7 @@ Future<void> main() async {
         ? ShellCapabilities.overlayShell
         : ShellCapabilities.plainWindow,
     onWindowsChanged: (rule) => dispatcher.updateWindows(rule),
-    onAlarmModeChanged: (mode) => dispatcher.updateAlarmMode(mode),
+    onRingSecondsChanged: (seconds) => dispatcher.updateRingSeconds(seconds),
     onScheduleModeChanged: (mode) => service.updateScheduleMode(mode),
     onWorkRuleChanged: (rule) => service.updateWorkRule(rule),
     notificationSurface: notifications.shown,
@@ -185,6 +185,7 @@ Future<void> main() async {
     // 只挂主引擎——悬浮引擎没有自己的一份闹钟。
     plans: planService,
     windows: NotificationWindowRule.defaultRule,
+    ringSeconds: controller.settings.alarmRingSeconds,
   );
 
   // 原生事件回流：通知按钮（含应用被杀后补做）、点通知定位、把手拖出、
@@ -218,7 +219,6 @@ Future<void> main() async {
   await controller.bootstrap(); // 设置 + 周期实例 + 定期挑（system 订阅者语义）
   await dispatcher.start();
   await dispatcher.updateWindows(controller.notificationWindowRule);
-  await dispatcher.updateAlarmMode(controller.settings.alarmMode);
 
   // 操作流水（决议 37）：`log` 数据单独一个文档 `.gtd/log.md`，append-only。
   // 走事件流订阅者（§3.3），不碰 TaskService。

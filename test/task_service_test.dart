@@ -160,7 +160,7 @@ void main() {
     expect(m.intervalMinutes, 30);
   });
 
-  // ---------- 提醒一律发出与逐任务响铃（v1.9 决议 38 改写：门槛已取消）----------
+  // ---------- 提醒一律发出与逐任务闹钟（普通有声；闹钟是额外强度）----------
 
   group('提醒', () {
     test('A3：importance 缺省 3——它就是"优先级"，也是调度优先级的乘数', () async {
@@ -177,30 +177,30 @@ void main() {
       expect(m.nextReminderAt, DateTime(2026, 10, 7, 16, 30));
     });
 
-    test('setTaskReminder：只写/删 metadata，不改下一站', () async {
+    test('setTaskAlarm：只写/删 metadata，不改下一站', () async {
       final a = await createA();
       final types = <DomainEventType>[];
       final sub = svc.events.listen((e) => types.add(e.type));
       addTearDown(sub.cancel);
 
-      await svc.setTaskReminder(a.id, enabled: true);
-      expect(svc.byId(a.id)!.ringEnabled, isTrue);
-      expect(svc.byId(a.id)!.metadata['remind'], 'true',
+      await svc.setTaskAlarm(a.id, enabled: true);
+      expect(svc.byId(a.id)!.alarmEnabled, isTrue);
+      expect(svc.byId(a.id)!.metadata['alarm'], 'true',
           reason: '持久意图落 metadata（附录 B.2 登记键）');
-      expect((await repo.getTask(a.id))!.ringEnabled, isTrue,
+      expect((await repo.getTask(a.id))!.alarmEnabled, isTrue,
           reason: '写盘再读回来仍然有效');
       expect(svc.lastSchedule!.nextReminderAt, DateTime(2026, 10, 7, 16, 30),
-          reason: '响铃不参与调度，锚点一格都不动');
-      expect(types, contains(DomainEventType.taskReminderSet));
+          reason: '闹钟不参与调度，锚点一格都不动');
+      expect(types, contains(DomainEventType.taskAlarmSet));
 
-      await svc.setTaskReminder(a.id, enabled: false);
-      expect(svc.byId(a.id)!.ringEnabled, isFalse);
-      expect(svc.byId(a.id)!.metadata.containsKey('remind'), isFalse);
+      await svc.setTaskAlarm(a.id, enabled: false);
+      expect(svc.byId(a.id)!.alarmEnabled, isFalse);
+      expect(svc.byId(a.id)!.metadata.containsKey('alarm'), isFalse);
       expect(svc.lastSchedule!.nextReminderAt, DateTime(2026, 10, 7, 16, 30),
-          reason: '关掉响铃只是变静音，提醒照发');
+          reason: '关掉闹钟只是回到普通提醒，锚点与提醒照旧');
     });
 
-    test('时点提醒不看响铃：开始型到点就是候选（两档一样）', () async {
+    test('时点提醒不看闹钟：开始型到点就是候选（两档一样）', () async {
       final meeting = await svc.createTask(
         title: '例会',
         type: TaskType.fixed,

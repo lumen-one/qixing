@@ -15,7 +15,7 @@ import 'package:qixing/repository/memory_task_repository.dart';
 import 'package:qixing/scheduler/slack_scheduler.dart';
 
 /// 时点性提醒（决议 3/18/26）：开始型到点 + 设了响的周期实例，
-/// 原样响、不受静默段限制、可选闹钟模式；只到点响一次。
+/// 原样响、不受静默段限制、可由任务自己升级成闹钟；只到点响一次。
 class _FakeAlarm implements AlarmPort {
   DateTime? scheduledAt;
   String? taskId;
@@ -164,20 +164,19 @@ void main() {
   });
 
   group('ReminderDispatcher：送达策略与渠道（决议 18/26）', () {
-    Future<ReminderDispatcher> start({bool alarmMode = false}) async {
+    Future<ReminderDispatcher> start() async {
       final d = ReminderDispatcher(
         service: svc,
         alarm: alarm,
         notifications: notifications,
         windows: const NotificationWindowRule(
             [NotificationWindow(9 * 60, 12 * 60)]), // 静默段 12:00 之后
-        alarmMode: alarmMode,
       );
       await d.start();
       return d;
     }
 
-    test('fixed 到点：原样响（不因静默段顺延）；没开响铃 → 静音渠道', () async {
+    test('fixed 到点：原样响（不因静默段顺延）；没开闹钟 → 普通渠道', () async {
       await start();
       await svc.createTask(
         title: '例会',
@@ -187,46 +186,36 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(alarm.scheduledAt, DateTime(2026, 10, 7, 15, 0));
       expect(alarm.draft!.title, '例会');
-      expect(alarm.draft!.channel, ReminderChannel.silent,
-          reason: '缺 metadata remind = 静音，但提醒照发');
+      expect(alarm.draft!.channel, ReminderChannel.ring,
+          reason: '普通提醒一律有声；缺 metadata alarm 只是不开闹钟');
       expect(alarm.draft!.actions.map((a) => a.id), ['done', 'snooze1h']);
     });
 
-    test('开了响铃 → 有声渠道（声与震动挂在渠道上）', () async {
+    test('开了闹钟 → alarm 渠道 + 全屏', () async {
       await start();
       final t = await svc.createTask(
         title: '例会',
         type: TaskType.fixed,
         deadline: DateTime(2026, 10, 7, 15, 0),
       );
-      await svc.setTaskReminder(t.id, enabled: true);
-      await Future<void>.delayed(Duration.zero);
-      expect(alarm.draft!.channel, ReminderChannel.ring);
-    });
-
-    test('闹钟模式：时点提醒升级为全屏闹钟渠道', () async {
-      await start(alarmMode: true);
-      await svc.createTask(
-        title: '例会',
-        type: TaskType.fixed,
-        deadline: DateTime(2026, 10, 7, 15, 0),
-      );
+      await svc.setTaskAlarm(t.id, enabled: true);
       await Future<void>.delayed(Duration.zero);
       expect(alarm.draft!.channel, ReminderChannel.alarm);
       expect(alarm.draft!.fullScreen, isTrue);
     });
 
-    test('闹钟模式不影响 Slack 软提醒（永远走通知栏渠道）', () async {
-      await start(alarmMode: true);
-      await svc.createTask(
+    test('闹钟不影响 Slack 软提醒（永远走通知栏渠道）', () async {
+      await start();
+      final t = await svc.createTask(
         title: '写周报',
         deadline: DateTime(2026, 10, 7, 18, 0),
         estimatedWorkMinutes: 60,
       );
+      await svc.setTaskAlarm(t.id, enabled: true);
       await Future<void>.delayed(Duration.zero);
       // 软提醒：nextReminderAt 落在静默段 → 顺延到下一时段开头
       expect(alarm.draft!.channel, isNot(ReminderChannel.alarm),
-          reason: '闹钟模式只管时点提醒');
+          reason: '软提醒不给闹钟，开了也只走通知栏');
       expect(alarm.draft!.fullScreen, isFalse);
     });
   });
@@ -234,14 +223,14 @@ void main() {
   // 无排序档不跑调度（决定卡 mode-as-information-depth）：截止型与开始型共用
   // 一套**两站**时点提醒（`T − 提前量` 与 `T`），复用同一条链的幂等与补响宽限。
   group('无排序档：两站时点提醒（提前一站 + 到点一站）', () {
-    test('第一站 = 截止 − 提前量；响铃开关不影响发不发', () async {
+    test('第一站 = 截止 − 提前量；闹钟开关不影响发不发', () async {
       await svc.updateScheduleMode(ScheduleMode.manual);
       final t = await svc.createTask(
           title: '写周报', deadline: DateTime(2026, 10, 7, 18, 0));
       final point = svc.nextPointReminder()!;
       expect(point.taskId, t.id);
       expect(point.at, DateTime(2026, 10, 7, 17, 30));
-      expect(t.ringEnabled, isFalse, reason: '没开响铃，但照样是候选');
+      expect(t.alarmEnabled, isFalse, reason: '没开闹钟，但照样是候选');
     });
 
     test('提前量可改，改完时刻跟着走', () async {
