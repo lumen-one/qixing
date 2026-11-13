@@ -46,9 +46,17 @@ abstract class AlarmRingPort {
   String? get ringingTaskId;      // 正在响的那一件；null = 没在响
 }
 
+/// 一个待触发的站点。静态站点（时点提醒、编排）重锚时一次排全交给原生存盘，
+/// 到点由原生自己投递，不依赖 Dart 进程还在。
+class AlarmStation {
+  final DateTime at;
+  final ReminderDraft draft;   // draft.taskId 就是站点 id
+}
+
 abstract class AlarmPort {
-  /// 全局唯一闹钟。[draft] 供"应用被杀时也能自己弹通知"的实现使用。
-  Future<void> scheduleNext(DateTime at, String taskId, {ReminderDraft? draft});
+  /// 用整张站点表替换当前所有闹钟：先取消旧的，再逐站挂上。
+  /// 安卓把表持久化到原生 prefs，开机 / 应用更新后自行恢复；桌面只取最早一站。
+  Future<void> scheduleStations(List<AlarmStation> stations);
   Future<void> cancel();
   /// 到点（安卓=系统闹钟回调；桌面=Timer）。delivered = 系统侧已经弹过通知
   /// （安卓原生接收器照着草案自己投递），分发器只记账、不再 show。
@@ -73,8 +81,9 @@ abstract class PermissionPort {
 桌面任务目录走环境变量 `GTD_TASKS_DIR` / 引导配置，不做目录选择 UI）。
 
 安卓适配器（`lib/platform/android_adapters.dart` + `android/…/com/lumenone/qixing/` 原生侧）：
-`AndroidAlarmPort` / `AndroidNotificationPort` / `AndroidAlarmRingPort`（系统精确闹钟
-AlarmManager + 通知渠道 `gtd_ring`/`gtd_silent`/`gtd_alarm`/`gtd_ringing`/`gtd_overlay` +
+`AndroidAlarmPort` / `AndroidNotificationPort` / `AndroidAlarmRingPort`（`AlarmManager.setAlarmClock()`
+逐站挂站点表并存进原生 prefs，开机由 `BootReceiver` 恢复；通知渠道
+`gtd_ring`/`gtd_silent`/`gtd_alarm`/`gtd_ringing`/`gtd_overlay` +
 通知按钮 + full-screen intent + 循环铃声服务 `AlarmRingService`（它自己的前台通知走
 `gtd_ringing`，静音——声音归播放器，不归渠道）；`gtd_ring` 与 `gtd_silent` 都是
 IMPORTANCE_HIGH——横幅必现，区别只在有没有声音与震动，`silent` 只给编排条目）、
@@ -103,8 +112,8 @@ IMPORTANCE_HIGH——横幅必现，区别只在有没有声音与震动，`sile
 
 边界（写死，避免两个引擎打架）：
 
-1. **交付类插座与观察类订阅者只在主引擎装配**：全局单闹钟归主引擎那一份，悬浮引擎
-   不起 ReminderDispatcher（两个引擎各自挂闹钟会互相覆盖）；`EventLog`（操作流水）
+1. **交付类插座与观察类订阅者只在主引擎装配**：站点表由主引擎那一份下发，悬浮引擎
+   不起 ReminderDispatcher（两个引擎各下发一张表会互相覆盖）；`EventLog`（操作流水）
    同理只在主引擎挂，否则同一件事会被记两遍；
 2. **写路径仍然唯一**：悬浮面板的命令同样走它自己的 `TaskService`（C1 不变），
    两个引擎之间的状态同步走**文件**——两边都 `watch()` 任务目录（与"Obsidian 手改
@@ -112,6 +121,11 @@ IMPORTANCE_HIGH——横幅必现，区别只在有没有声音与震动，`sile
 3. **进应用的唯一入口**是面板头部的『设置』与实例菜单的『编辑规则』
    （`openApp{target,routineId}`），其余交互全部就地完成。
 
-**单闹钟职责归属（条款有主语）**：全局任一时刻只挂一个下一站闹钟。调用方 =
-application 层的 **ReminderDispatcher**（见 [reminder.md](reminder.md)）。装配点负责把 AlarmPort 注入。
-**适配器无自主权**：只执行"取消旧的、挂新的"，不得自行重排或补挂。
+**站点表职责归属（条款有主语）**：调用方 = application 层的 **ReminderDispatcher**
+（见 [reminder.md](reminder.md)），它把重锚那一刻能算出的所有静态站点一次排全交给
+`AlarmPort`；装配点负责注入。**适配器不重排站点，但负责把它们保住**：安卓把整张表
+写进原生 prefs，用 `AlarmManager.setAlarmClock()` 逐站挂上（用户可见的闹钟，Doze 与
+厂商省电策略不推迟，也不吃 `SCHEDULE_EXACT_ALARM` 授权）；`BootReceiver` 在开机、
+应用更新后读表重挂，不需要等 Dart 进程起来；`ReminderReceiver` 到点只投这一站、
+把表里的这一项标成已投，其余站点原样留着，由 Dart 的下一次重锚覆盖整表。桌面没有
+系统闹钟，`TimerAlarmPort` 只取最早一站。
