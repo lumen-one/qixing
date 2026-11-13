@@ -10,6 +10,7 @@ import '../domain/time_context.dart';
 import '../domain/trash.dart';
 import '../repository/task_repository.dart';
 import '../scheduler/scheduler.dart';
+import 'notification_window.dart';
 
 part 'task_service/task_service_trash.dart';
 part 'task_service/task_service_routine.dart';
@@ -34,9 +35,9 @@ class TaskService {
   /// 传进来（新装默认无排序）。
   ///
   /// 它只决定**清单顺序与统计口径**（[ScheduleMode.isManual]）以及提醒的算法来源
-  /// （跑不跑调度）。**不筛提醒**：有时间的任务一律提醒，响不响是任务自己的
-  /// metadata `remind`。设置页改动经装配点回调调 [updateScheduleMode]；模式只改
-  /// 查询口径与调度入参，**不动任何任务数据**。
+  /// （跑不跑调度）。**不筛提醒**：有时间的任务一律提醒，能不能升级成闹钟由任务
+  /// 自己的 metadata `alarm` 决定。设置页改动经装配点回调调 [updateScheduleMode]；
+  /// 模式只改查询口径与调度入参，**不动任何任务数据**。
   ScheduleMode scheduleMode;
 
   /// **『问重要度』开关**（设置里的标准档选项）：排序键要不要乘
@@ -54,6 +55,16 @@ class TaskService {
   /// 在 `T − manualLeadMinutes` 与 `T` 各响一次。只在这一档用，改它走
   /// [updateManualLead]。
   int manualLeadMinutes = 30;
+
+  /// **送达策略**（§4.3）：只裁决"算出来的时刻能不能真正打扰用户"，不参与 slack
+  /// 计算、也不改锚点。由分发器在构造与设置变更时推下来，让周期
+  /// 轮询与系统闹钟共用同一份规则——只顺延闹钟那一支的话，前台 tick 会照原始
+  /// 锚点在静默段把提醒弹出来，随后重锚又把顺延到明早的闹钟取消掉。
+  NotificationWindowRule deliveryWindows = NotificationWindowRule.defaultRule;
+
+  void updateDeliveryWindows(NotificationWindowRule rule) {
+    deliveryWindows = rule;
+  }
 
   /// 可注入时钟：测试与仿真可以自由拨动时间。
   final DateTime Function() now;
@@ -718,7 +729,8 @@ class TaskService {
   /// **无排序档换成两站**——截止型与开始型同一套，`T − manualLeadMinutes` 与 `T`。
   /// 已响过那一站（`point_fired` 与它一致）与超过补响宽限的不再返回。
   ///
-  /// **没有提醒门槛**：三档都提醒，响不响由送达时的渠道决定（`remind`）。
+  /// **没有提醒门槛**：两档都提醒，能不能升级成闹钟由送达时按任务的
+  /// metadata `alarm` 挑渠道决定。
   PointReminder? nextPointReminder() {
     final current = now();
     final manual = scheduleMode.isManual;
@@ -803,8 +815,9 @@ class TaskService {
   /// 到点则产出 ReminderEvent 并重锚；未到点返回 null。
   /// 绝对不要在这里无条件 refreshSchedule（C2）。
   ///
-  /// 两种提醒都不筛：时点提醒取 [nextPointReminder]（最早那一站），软提醒取
-  /// `ScheduleResult.nextReminderAt`（最早锚点）。响不响留给送达时挑渠道。
+  /// 两种提醒都不筛发不发：时点提醒取 [nextPointReminder]（最早那一站），软提醒取
+  /// `ScheduleResult.nextReminderAt`（最早锚点，按送达策略顺延后判定）。响不响留给
+  /// 送达时挑渠道。
   ///
   /// **不可重入**：上一次还在跑（里面有 await 读盘/落盘）时，这一次直接返回 null
   /// ——少发一条，好过同一件事弹两次。
@@ -851,7 +864,11 @@ class TaskService {
 
     final s = lastSchedule;
     if (s == null || s.nextReminderAt == null) return null;
-    if (current.isBefore(s.nextReminderAt!)) return null;
+    // 与挂闹钟那一路用同一份送达策略：段外顺延到下一时段开头。只顺延系统闹钟、
+    // 不顺延这里的话，20 秒 tick 会在静默段照原始锚点产出事件，而那条已经挂到
+    // 明早的闹钟随后被重锚取消——用户设的静默段等于没生效。
+    final deliveryAt = deliveryWindows.resolveDelivery(s.nextReminderAt!);
+    if (current.isBefore(deliveryAt)) return null;
     final taskId = s.nextReminderTaskId ?? s.nextTaskId;
     if (taskId == null) return null;
     // 响过之后这件任务的锚点作废：重算要给出"下一轮"，不能沿用刚响的那个。

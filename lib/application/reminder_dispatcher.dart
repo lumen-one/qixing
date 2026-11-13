@@ -61,6 +61,15 @@ class ReminderDispatcher {
   StreamSubscription<FiredAlarm>? _fires;
   StreamSubscription<void>? _planChanges;
 
+  /// 重挂串行链：事件流、设置变更、到点回调会同时打进来，只让最新的一次真正
+  /// 动闹钟。两次重挂交错时，后读到旧调度结果的那次会覆盖新挂的那一站。
+  Future<void> _rescheduleChain = Future.value();
+  int _rescheduleGen = 0;
+
+  /// 到点回调串行链：应用被杀期间攒下的 alarmFired 会在 drainEvents 里一次性
+  /// 灌进来；并发跑会被 TaskService 的不可重入锁吞掉，后面的几条连记账都做不了。
+  Future<void> _firedChain = Future.value();
+
   /// 这一次挂的是编排那一站吗（不是就不碰任务）。
   PlanReminder? _planStation;
 
@@ -72,11 +81,15 @@ class ReminderDispatcher {
     this.ring,
     this.windows = NotificationWindowRule.defaultRule,
     this.ringSeconds = 60,
-  });
+  }) {
+    // 轮询那一侧也要按同一份规则判"能不能打扰"，否则前台 tick 会绕过静默段。
+    service.updateDeliveryWindows(windows);
+  }
 
   /// 设置页改了送达策略：换规则并按新规则重挂下一站闹钟。
   Future<void> updateWindows(NotificationWindowRule rule) async {
     windows = rule;
+    service.updateDeliveryWindows(rule);
     await _reschedule();
   }
 
@@ -106,10 +119,26 @@ class ReminderDispatcher {
     await _events?.cancel();
     await _fires?.cancel();
     await _planChanges?.cancel();
+    await _firedChain;
+    await _rescheduleChain;
     await alarm.cancel();
   }
 
-  Future<void> _reschedule() async {
+  /// 排一次重挂。并发时只保留最新的一次：链上排队的旧请求直接跳过，省得
+  /// "取消旧的、挂新的"两步被别的重挂插进来拆开。
+  Future<void> _reschedule() {
+    final gen = ++_rescheduleGen;
+    _rescheduleChain = _rescheduleChain.then((_) async {
+      if (gen != _rescheduleGen) return;
+      await _rescheduleNow();
+    }).catchError((Object _) {
+      // 挂不上闹钟不该让后面的重挂全部停摆：这一站丢了，下一次事件会再算一遍。
+    });
+    return _rescheduleChain;
+  }
+
+  Future<void> _rescheduleNow() async {
+    final current = service.now();
     final s = service.lastSchedule;
     await alarm.cancel();
     _planStation = null;
@@ -124,7 +153,7 @@ class ReminderDispatcher {
     // 时点闹钟前面——那一晚的闹钟就被跳过了。
     final softDelivery = softAt == null ? null : windows.resolveDelivery(softAt);
     // 编排这一源只递未来的时刻，没有"送达策略"可言（静音，不挑时段）。
-    final plan = plans?.nextReminder(service.now());
+    final plan = plans?.nextReminder(current);
 
     DateTime? at;
     String? taskId;
@@ -149,6 +178,13 @@ class ReminderDispatcher {
     }
     if (at == null || taskId == null) return;
 
+    // 时点提醒有 30 分钟补响宽限，nextPointReminder 可能给出一个已经过去的时刻。
+    // 原样交给 AlarmManager 会立即触发；那一站的 point_fired 万一没写成（例如被
+    // 轮询锁挡了一下），就会立刻再挂再响，绕成短循环。文案仍用原定的 at。
+    final due = at.isAfter(current)
+        ? at
+        : current.add(const Duration(seconds: 1));
+
     final station = _planStation;
     final task = station == null ? service.byId(taskId) : null;
     final channel = station != null
@@ -159,7 +195,7 @@ class ReminderDispatcher {
     // 自己弹通知（原生接收器照着这份草案渲染）。闹钟的正文此刻就要带上
     // "接下来"与"同时还有"——到点那一刻应用可能已经不在了。
     await alarm.scheduleNext(
-      at,
+      due,
       taskId,
       draft: ReminderDraft(
         taskId: taskId,
@@ -174,6 +210,13 @@ class ReminderDispatcher {
     );
   }
 
+  /// 到点事件排队执行：drainEvents 会一次性灌进多条，串行跑才不会互相吞掉。
+  void _onFired(FiredAlarm firing) {
+    _firedChain = _firedChain.then((_) => _handleFired(firing)).catchError((Object _) {
+      // 一条失败不该把后面排队的几条一起掐掉；下一次重锚会把账补回来。
+    });
+  }
+
   /// 闹钟到点。**投递只做一次**：安卓的原生接收器在回调之前就已经照着挂
   /// 闹钟时的草案弹了通知（应用被杀也照弹），所以 `delivered` 为真时这里
   /// 只记账并排下一站；再 show 一次就是同 id 替换 + 重新响铃，通知时刻被刷成
@@ -181,7 +224,7 @@ class ReminderDispatcher {
   ///
   /// 编排那一站不经过 `pollReminder`（那不是任务，没有可记账的状态）：照草案弹完就
   /// 排下一站。**同一时刻的任务提醒不受影响**——poll 照跑，撞在同一分钟时两条都到。
-  Future<void> _onFired(FiredAlarm firing) async {
+  Future<void> _handleFired(FiredAlarm firing) async {
     final planStation = isPlanReminderId(firing.taskId) &&
             _planStation?.id == firing.taskId
         ? _planStation

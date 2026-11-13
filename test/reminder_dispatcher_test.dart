@@ -41,8 +41,9 @@ class _FakeAlarm implements AlarmPort {
   Stream<FiredAlarm> get fired => _fired.stream;
 
   /// 触发一次到点。[delivered] = 系统侧已经弹过通知（安卓原生接收器）。
-  void fire({bool delivered = false}) {
-    _fired.add(FiredAlarm(taskId ?? '', delivered: delivered));
+  /// [taskId] 用于模拟冷启动时一次性回放多条积压事件（那时挂的站早已换过）。
+  void fire({String? taskId, bool delivered = false}) {
+    _fired.add(FiredAlarm(taskId ?? this.taskId ?? '', delivered: delivered));
   }
 }
 
@@ -516,5 +517,102 @@ void main() {
     expect(alarm.cancels, greaterThan(cancelsBefore),
         reason: '原生接收器只能读挂闹钟时写下的秒数，不重挂就还是旧时长');
     expect(alarm.taskId, a.id, reason: '重挂的是同一站，不改变谁响、也不改变时刻');
+  });
+
+  // 送达策略不只作用于系统闹钟：前台 20 秒 tick 走的是同一个 pollReminder。
+  test('静默段内前台轮询不弹软提醒：与挂闹钟共用同一份送达策略', () async {
+    const evening =
+        NotificationWindowRule([NotificationWindow(19 * 60, 21 * 60)]);
+    await startDispatcher(windows: evening);
+    await svc.createTask(
+      title: 'A',
+      deadline: DateTime(2026, 10, 7, 18, 0),
+      estimatedWorkMinutes: 60,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(alarm.scheduledAt, DateTime(2026, 10, 7, 19, 0),
+        reason: '原始锚点 16:30 落在段外，闹钟顺延到 19:00');
+
+    now = DateTime(2026, 10, 7, 16, 30);
+    expect(await svc.pollReminder(), isNull,
+        reason: 'tick 不能照原始锚点在静默段把事件产出来');
+
+    now = DateTime(2026, 10, 7, 19, 0);
+    final event = await svc.pollReminder();
+    expect(event, isNotNull);
+    expect(event!.kind, ReminderKind.soft);
+  });
+
+  test('改通知时间段：service 与分发器拿到同一份规则', () async {
+    final d = await startDispatcher();
+    const evening =
+        NotificationWindowRule([NotificationWindow(19 * 60, 21 * 60)]);
+    await d.updateWindows(evening);
+    expect(
+      svc.deliveryWindows.resolveDelivery(DateTime(2026, 10, 7, 16, 30)),
+      DateTime(2026, 10, 7, 19, 0),
+    );
+  });
+
+  test('补响宽限内的过去站：挂到 now+1s，不把过期时刻交给闹钟', () async {
+    final d = await startDispatcher();
+    await svc.createTask(
+      title: '例会',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 16, 30),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(alarm.scheduledAt, DateTime(2026, 10, 7, 16, 30));
+
+    now = DateTime(2026, 10, 7, 16, 35); // 已过 5 分钟，仍在 30 分钟宽限内
+    await d.updateWindows(NotificationWindowRule.defaultRule);
+    expect(alarm.scheduledAt, DateTime(2026, 10, 7, 16, 35, 1));
+  });
+
+  test('连续重挂并发：只真正动一次闹钟，最终留下最新的一站', () async {
+    final d = await startDispatcher(ringSeconds: 30);
+    await svc.createTask(
+      title: '例会',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 19, 0),
+    );
+    await Future<void>.delayed(Duration.zero);
+    final before = alarm.cancels;
+
+    await Future.wait([
+      d.updateWindows(const NotificationWindowRule(
+          [NotificationWindow(9 * 60, 12 * 60)])),
+      d.updateWindows(NotificationWindowRule.defaultRule),
+      d.updateRingSeconds(120),
+    ]);
+
+    expect(d.ringSeconds, 120);
+    expect(alarm.cancels, lessThanOrEqualTo(before + 1),
+        reason: '三次排进同一条链，旧请求跳过，只有最新一次真的取消重挂');
+    expect(alarm.taskId, isNotNull);
+  });
+
+  test('冷启动连续回放多条到点事件：逐条记账，不被不可重入锁吞掉', () async {
+    await startDispatcher();
+    final a = await svc.createTask(
+      title: 'A',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 17, 50),
+    );
+    final b = await svc.createTask(
+      title: 'B',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 17, 55),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    now = DateTime(2026, 10, 7, 18, 0); // 两站都过了，且都在补响宽限内
+    alarm.fire(taskId: a.id);
+    alarm.fire(taskId: b.id);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(notifications.shownList, hasLength(2));
+    expect(notifications.shownList.map((s) => s.event.taskId),
+        containsAll(<String>[a.id, b.id]));
   });
 }

@@ -20,8 +20,8 @@ import 'scheduler.dart';
 /// 风险函数、间隔公式、锚点沿用、过滤条件（fixed / 散件 / 周期实例不进调度）、
 /// 派生状态（infeasible / overdue / snoozed）、四档排序全部一致。
 ///
-/// **不筛提醒**：算法只算"下一站是什么时候"；响不响铃是任务自己的 metadata `remind`，
-/// 到送达那一刻才分渠道（§3.2 规则 B4）。
+/// **不筛提醒**：算法只算"下一站是什么时候"；能不能升级成闹钟由任务自己的
+/// metadata `alarm` 决定，到送达那一刻才分渠道（§3.2 规则 B4）。
 class SlackPriorityScheduler implements Scheduler {
   static const String defaultId = 'slack-priority.v1';
 

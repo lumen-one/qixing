@@ -229,7 +229,8 @@ class NativeBridge(
 
     private fun cancelAlarm(): Boolean = try {
         val manager = activity.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
-        // 只有 extras 相同的 PendingIntent 才会匹配（FLAG_UPDATE_CURRENT + 同 action/组件）。
+        // PendingIntent 的身份只看 requestCode / action / data / component，extras 不参与
+        // 匹配，所以占位 Reminder 也能命中那个闹钟（FLAG_UPDATE_CURRENT 顺手覆盖 extras）。
         val placeholder = Reminder("", "", null, ReminderChannel.RING, false, emptyList())
         manager.cancel(alarmPendingIntent(placeholder))
         true

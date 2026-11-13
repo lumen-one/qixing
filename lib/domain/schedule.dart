@@ -15,7 +15,8 @@ import 'task.dart';
 /// 关掉时排序乘数取 1、表单里也不出现；打开即原来的"完整档"。以前它是一档，
 /// 但两档之间那时只差这一处，等于拿一个表单开关冒充一个档位（2026-10-29 修订二）。
 ///
-/// 两档都**不筛提醒**：有时间的任务一律提醒，响不响是任务自己的 metadata `remind`。
+/// 两档都**不筛提醒**：有时间的任务一律提醒，能不能升级成闹钟由任务自己的
+/// metadata `alarm` 决定。
 ///
 /// 两档都**不改任务数据**：档位是查询口径与算法入参，切档只重算，不迁移。
 enum ScheduleMode {
@@ -168,8 +169,8 @@ class TaskMetric {
 
   /// **提醒锚点**：算法算出的"下一次该看它"的时刻（墙钟）；逾期为 null。
   ///
-  /// 它只管"什么时候发"——响不响铃是任务自己的 metadata `remind`，在送达时
-  /// 挑渠道（`ReminderChannel` 的 ring / silent），不进派生指标。
+  /// 它只管"什么时候发"——能不能升级成闹钟由任务自己的 metadata `alarm` 决定，
+  /// 在送达时挑渠道（`ReminderChannel`），不进派生指标。
   final DateTime? nextReminderAt;
 
   /// 本次锚定的提醒间隔（工作分钟）。
@@ -202,7 +203,7 @@ class ScheduleResult {
 
   /// 全局**下一站提醒**（最早的各任务 [TaskMetric.nextReminderAt]）。
   ///
-  /// 三档都产出；响不响在送达时才分（挑渠道），不在这里筛。
+  /// 两档都产出；响不响在送达时才分（挑渠道），不在这里筛。
   final DateTime? nextReminderAt;
   final String? nextReminderTaskId;
 
