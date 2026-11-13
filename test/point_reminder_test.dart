@@ -23,11 +23,14 @@ class _FakeAlarm implements AlarmPort {
   final _fired = StreamController<FiredAlarm>.broadcast();
 
   @override
-  Future<void> scheduleNext(DateTime at, String id,
-      {ReminderDraft? draft}) async {
-    scheduledAt = at;
-    taskId = id;
-    this.draft = draft;
+  Future<void> scheduleStations(List<AlarmStation> stations) async {
+    scheduledAt = null;
+    taskId = null;
+    draft = null;
+    if (stations.isEmpty) return;
+    scheduledAt = stations.first.at;
+    taskId = stations.first.id;
+    draft = stations.first.draft;
   }
 
   @override

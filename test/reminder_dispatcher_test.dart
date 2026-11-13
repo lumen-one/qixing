@@ -25,11 +25,14 @@ class _FakeAlarm implements AlarmPort {
   final _fired = StreamController<FiredAlarm>.broadcast();
 
   @override
-  Future<void> scheduleNext(DateTime at, String id,
-      {ReminderDraft? draft}) async {
-    scheduledAt = at;
-    taskId = id;
-    this.draft = draft;
+  Future<void> scheduleStations(List<AlarmStation> stations) async {
+    scheduledAt = null;
+    taskId = null;
+    draft = null;
+    if (stations.isEmpty) return;
+    scheduledAt = stations.first.at;
+    taskId = stations.first.id;
+    draft = stations.first.draft;
   }
 
   @override
@@ -386,7 +389,12 @@ void main() {
   test('TimerAlarmPort 冒烟：过期时刻立即触发', () async {
     final port = TimerAlarmPort();
     final fired = port.fired.first.timeout(const Duration(seconds: 2));
-    await port.scheduleNext(DateTime.now().subtract(const Duration(minutes: 1)), 't1');
+    await port.scheduleStations([
+      AlarmStation(
+        at: DateTime.now().subtract(const Duration(minutes: 1)),
+        draft: const ReminderDraft(taskId: 't1', title: '冒烟'),
+      ),
+    ]);
     expect((await fired).taskId, 't1');
     await port.cancel();
   });

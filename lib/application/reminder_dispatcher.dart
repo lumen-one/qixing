@@ -9,14 +9,16 @@ import 'notification_window.dart';
 import 'plan_service.dart';
 import 'task_service.dart';
 
-/// 单闹钟协调者（§4.3）：全局任一时刻只挂一个下一站闹钟。
+/// 站点表协调者（§4.3）：重锚一次把能预排的站全交给 AlarmPort。
 ///
 /// 流向：TaskService 重锚（scheduleReanchored）/ PlanService 变更（changes）→
-/// alarm.cancel() → 计算送达时刻 → alarm.scheduleNext()；
+/// alarm.cancel() → 算出三个提醒源的站点表 → alarm.scheduleStations()；
 /// alarm.fired → （编排那一站直接弹）TaskService.pollReminder() →
-/// NotificationPort.show(...)。
+/// NotificationPort.show(...) → 重锚覆盖整表。
 ///
-/// 适配器无自主权：只执行"取消旧的、挂新的"。
+/// 时点提醒与编排是静态站，一次排全；软提醒按裕度动态调频，只放当下算出的
+/// 那一站。安卓把表存进原生 prefs 并逐站挂进 AlarmManager，开机自行恢复，
+/// 所以应用不在时静态站照常到点投递（docs/sockets/delivery.md）。
 ///
 /// 三个提醒源：
 /// - **Slack 软提醒**（截止型任务）：经 [windows] 送达策略（段外顺延到下一段开头）；
@@ -70,8 +72,8 @@ class ReminderDispatcher {
   /// 灌进来；并发跑会被 TaskService 的不可重入锁吞掉，后面的几条连记账都做不了。
   Future<void> _firedChain = Future.value();
 
-  /// 这一次挂的是编排那一站吗（不是就不碰任务）。
-  PlanReminder? _planStation;
+  /// 表里每一条编排站，按站点 id 认人（到点回传的是 id）。
+  Map<String, PlanReminder> _planStations = const {};
 
   ReminderDispatcher({
     required this.service,
@@ -86,7 +88,7 @@ class ReminderDispatcher {
     service.updateDeliveryWindows(windows);
   }
 
-  /// 设置页改了送达策略：换规则并按新规则重挂下一站闹钟。
+  /// 设置页改了送达策略：换规则并按新规则重挂站点表。
   Future<void> updateWindows(NotificationWindowRule rule) async {
     windows = rule;
     service.updateDeliveryWindows(rule);
@@ -141,73 +143,88 @@ class ReminderDispatcher {
     final current = service.now();
     final s = service.lastSchedule;
     await alarm.cancel();
-    _planStation = null;
-    // 无排序档没有软提醒（不跑裕度），也不产出派生量；`s` 为 null 时只挂时点。
-    // 那一档的截止型任务本身就走时点提醒这条链（截止前一次，见 nextPointReminder）。
     final manual = service.isManualSort;
-    final point = service.nextPointReminder();
+    final candidates = <_StationCandidate>[];
+    final planStations = <String, PlanReminder>{};
+
+    // 编排：未来每一站都是静态的，一次排全。同一分钟共用一个 id（PlanService
+    // 已合并过），按 id 记下正文，到点回传时好认人。
+    for (final p in plans?.allReminders(current) ?? const <PlanReminder>[]) {
+      planStations[p.id] = p;
+      candidates.add(_StationCandidate(
+        at: p.at,
+        priority: 0,
+        draft: ReminderDraft(
+          taskId: p.id,
+          title: p.title,
+          body: _planBody(p),
+          channel: ReminderChannel.silent,
+        ),
+      ));
+    }
+    _planStations = planStations;
+
+    // 软提醒：按裕度动态调频，下一站要重算才知道，表里只放当下这一站。送达策略
+    // 只顺延这一支；时点提醒与编排都不吃静默段。无排序档没有软提醒。
     final softAt = manual ? null : s?.nextReminderAt;
     final softId = manual ? null : s?.nextReminderTaskId;
-    // 先按送达策略把软提醒的**实际送达时刻**算出来，再和时点提醒比早晚（v1.26）。
-    // 拿没顺延的原始时刻去比，会把一个被顺延到次日上午的软提醒排在今晚的
-    // 时点闹钟前面——那一晚的闹钟就被跳过了。
-    final softDelivery = softAt == null ? null : windows.resolveDelivery(softAt);
-    // 编排这一源只递未来的时刻，没有"送达策略"可言（静音，不挑时段）。
-    final plan = plans?.nextReminder(current);
-
-    DateTime? at;
-    String? taskId;
-    var pointFired = false;
-    // 撞在同一时刻时按 编排 → 软提醒 → 时点 排：编排先占站点，到点那一刻照样会
-    // `pollReminder`，任务那一条不会丢（反过来就会丢掉编排那一条）。
-    if (plan != null &&
-        (softDelivery == null || !plan.at.isAfter(softDelivery)) &&
-        (point == null || !plan.at.isAfter(point.at))) {
-      at = plan.at;
-      taskId = plan.id;
-      _planStation = plan;
-    } else if (softDelivery != null &&
-        softId != null &&
-        (point == null || !point.at.isBefore(softDelivery))) {
-      at = softDelivery; // 软提醒：已按送达策略顺延
-      taskId = softId;
-    } else if (point != null) {
-      at = point.at; // 时点性提醒：原样响（决议 26）
-      taskId = point.taskId;
-      pointFired = true;
+    if (softAt != null && softId != null) {
+      final task = service.byId(softId);
+      candidates.add(_StationCandidate(
+        at: windows.resolveDelivery(softAt),
+        priority: 1,
+        draft: ReminderDraft(
+          taskId: softId,
+          title: task?.title ?? '该做这件事了',
+          body: _bodyOf(task),
+          channel: ReminderChannel.ring,
+          actions: defaultActions,
+        ),
+      ));
     }
-    if (at == null || taskId == null) return;
 
-    // 时点提醒有 30 分钟补响宽限，nextPointReminder 可能给出一个已经过去的时刻。
-    // 原样交给 AlarmManager 会立即触发；那一站的 point_fired 万一没写成（例如被
-    // 轮询锁挡了一下），就会立刻再挂再响，绕成短循环。文案仍用原定的 at。
-    final due = at.isAfter(current)
-        ? at
-        : current.add(const Duration(seconds: 1));
+    // 时点提醒：每一件未来会响的站都排上。应用不在时由原生照表逐站投递，
+    // 正文里的「接下来」与「同时还有」此刻就要带上——到点没有 Dart 可问。
+    for (final p in service.allPointReminders()) {
+      final task = service.byId(p.taskId);
+      final alarmOn = _channelFor(task, point: true) == ReminderChannel.alarm;
+      candidates.add(_StationCandidate(
+        at: p.at,
+        priority: 2,
+        draft: ReminderDraft(
+          taskId: p.taskId,
+          title: task?.title ?? '该做这件事了',
+          body: _bodyFor(task, alarm: alarmOn, at: p.at),
+          channel: alarmOn ? ReminderChannel.alarm : ReminderChannel.ring,
+          fullScreen: alarmOn,
+          actions: defaultActions,
+        ),
+      ));
+    }
 
-    final station = _planStation;
-    final task = station == null ? service.byId(taskId) : null;
-    final channel = station != null
-        ? ReminderChannel.silent
-        : _channelFor(task, point: pointFired);
-    final alarmOn = channel == ReminderChannel.alarm;
-    // 挂闹钟时就把"到点要交付什么"定下来：安卓应用被杀时由系统闹钟
-    // 自己弹通知（原生接收器照着这份草案渲染）。闹钟的正文此刻就要带上
-    // "接下来"与"同时还有"——到点那一刻应用可能已经不在了。
-    await alarm.scheduleNext(
-      due,
-      taskId,
-      draft: ReminderDraft(
-        taskId: taskId,
-        title: station?.title ?? task?.title ?? '该做这件事了',
-        body: station == null
-            ? _bodyFor(task, alarm: alarmOn, at: at)
-            : _planBody(station),
-        channel: channel,
-        fullScreen: alarmOn,
-        actions: station == null ? defaultActions : const [],
-      ),
-    );
+    // 同一时刻只留一个站，优先级沿用旧口径：编排 → 软提醒 → 时点。
+    final byMoment = <int, _StationCandidate>{};
+    for (final c in candidates) {
+      final key = c.at.millisecondsSinceEpoch;
+      final prev = byMoment[key];
+      if (prev == null || c.priority < prev.priority) byMoment[key] = c;
+    }
+    final ordered = byMoment.values.toList()
+      ..sort((a, b) => a.at.compareTo(b.at));
+
+    // 表是重锚那一刻的快照，别把半年后的站全挂上：7 天 / 40 站，超出的由
+    // 下一次重锚补。已过时刻推到 now+1s（时点提醒有 30 分钟补响宽限，原样交给
+    // AlarmManager 会立即触发，point_fired 没写成就会绕成短循环）。
+    final horizon = current.add(const Duration(days: 7));
+    final stations = <AlarmStation>[];
+    for (final c in ordered) {
+      if (stations.length >= 40 || c.at.isAfter(horizon)) break;
+      final at = c.at.isAfter(current)
+          ? c.at
+          : current.add(const Duration(seconds: 1));
+      stations.add(AlarmStation(at: at, draft: c.draft));
+    }
+    await alarm.scheduleStations(stations);
   }
 
   /// 到点事件排队执行：drainEvents 会一次性灌进多条，串行跑才不会互相吞掉。
@@ -225,10 +242,8 @@ class ReminderDispatcher {
   /// 编排那一站不经过 `pollReminder`（那不是任务，没有可记账的状态）：照草案弹完就
   /// 排下一站。**同一时刻的任务提醒不受影响**——poll 照跑，撞在同一分钟时两条都到。
   Future<void> _handleFired(FiredAlarm firing) async {
-    final planStation = isPlanReminderId(firing.taskId) &&
-            _planStation?.id == firing.taskId
-        ? _planStation
-        : null;
+    final planStation =
+        isPlanReminderId(firing.taskId) ? _planStations[firing.taskId] : null;
     if (planStation != null && !firing.delivered) {
       await _showPlan(planStation);
     }
@@ -403,4 +418,17 @@ class ReminderDispatcher {
 
   static String _fmt(DateTime d) =>
       '${_two(d.month)}-${_two(d.day)} ${_two(d.hour)}:${_two(d.minute)}';
+}
+
+/// 排站时的临时候选：同一时刻按 priority 挑一个（编排 0 / 软提醒 1 / 时点 2）。
+class _StationCandidate {
+  final DateTime at;
+  final int priority;
+  final ReminderDraft draft;
+
+  const _StationCandidate({
+    required this.at,
+    required this.priority,
+    required this.draft,
+  });
 }

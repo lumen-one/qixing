@@ -56,22 +56,27 @@ class AndroidNativeBridge {
     }
   }
 
-  Future<bool> scheduleAlarm({
-    required DateTime at,
-    required String taskId,
-    ReminderDraft? draft,
+  /// 整张站点表一次下发：原生逐站挂 `setAlarmClock()` 并把表存进 prefs，
+  /// 开机 / 应用更新后由 `BootReceiver` 照表恢复，不需要 Dart 在跑。
+  Future<bool> scheduleStations(
+    List<AlarmStation> stations, {
     int ringSeconds = 60,
   }) =>
-      _invoke('scheduleAlarm', {
-        'atMillis': at.millisecondsSinceEpoch,
-        'taskId': taskId,
-        'title': draft?.title ?? '该做这件事了',
-        'body': draft?.body,
-        'channel': (draft?.channel ?? ReminderChannel.ring).name,
-        'fullScreen': draft?.fullScreen ?? false,
-        'actions': _actionsArg(draft?.actions ?? const []),
-        // 到点那一刻应用可能已经被杀，接收器只能照这份 extras 起铃：响铃时长跟闹钟
-        // 一起挂上去，别让原生自己去猜设置页里填的数。
+      _invoke('scheduleStations', {
+        'stations': [
+          for (final s in stations)
+            {
+              'atMillis': s.at.millisecondsSinceEpoch,
+              'taskId': s.draft.taskId,
+              'title': s.draft.title,
+              'body': s.draft.body,
+              'channel': s.draft.channel.name,
+              'fullScreen': s.draft.fullScreen,
+              'actions': _actionsArg(s.draft.actions),
+            }
+        ],
+        // 到点那一刻应用可能已经被杀，接收器只能照这份 extras 起铃：响铃时长
+        // 跟闹钟一起挂上去，别让原生自己去猜设置页里填的数。
         'ringSeconds': ringSeconds,
       });
 
@@ -123,6 +128,11 @@ class AndroidNativeBridge {
       _invoke('stopRinging', {'taskId': taskId});
 
   Future<bool> canUseFullScreenIntent() => _invoke('canUseFullScreenIntent');
+
+  /// 国产 ROM 的自启动 / 允许后台运行设置页：没有标准 API，只能跳厂商安全中心，
+  /// 打不开就退到本应用的系统详情页。
+  Future<bool> openBackgroundSettings() =>
+      _invoke('openBackgroundSettings');
 
   Future<bool> requestFullScreenIntentPermission() =>
       _invoke('requestFullScreenIntentPermission');
@@ -211,14 +221,8 @@ class AndroidAlarmPort implements AlarmPort {
   static int _defaultRingSeconds() => defaultAlarmRingSeconds;
 
   @override
-  Future<void> scheduleNext(DateTime at, String taskId,
-      {ReminderDraft? draft}) async {
-    await bridge.scheduleAlarm(
-      at: at,
-      taskId: taskId,
-      draft: draft,
-      ringSeconds: ringSeconds(),
-    );
+  Future<void> scheduleStations(List<AlarmStation> stations) async {
+    await bridge.scheduleStations(stations, ringSeconds: ringSeconds());
   }
 
   @override

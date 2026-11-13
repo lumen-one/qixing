@@ -87,21 +87,27 @@ void main() {
   test('挂闹钟时把响铃时长一起交给原生（应用被杀时接收器照它起铃）', () async {
     final alarm = AndroidAlarmPort(AndroidNativeBridge(), ringSeconds: () => 120);
 
-    await alarm.scheduleNext(
-      DateTime(2026, 11, 12, 9, 0),
-      't2',
-      draft: const ReminderDraft(
-        taskId: 't2',
-        title: '例会',
-        channel: ReminderChannel.alarm,
-        fullScreen: true,
+    await alarm.scheduleStations([
+      AlarmStation(
+        at: DateTime(2026, 11, 12, 9, 0),
+        draft: const ReminderDraft(
+          taskId: 't2',
+          title: '例会',
+          channel: ReminderChannel.alarm,
+          fullScreen: true,
+        ),
       ),
-    );
+    ]);
 
     final call = calls.single;
-    expect(call.method, 'scheduleAlarm');
+    expect(call.method, 'scheduleStations');
     expect(call.arguments['ringSeconds'], 120);
-    expect(call.arguments['fullScreen'], true);
-    expect(call.arguments['channel'], ReminderChannel.alarm.name);
+    final stations = call.arguments['stations'] as List<dynamic>;
+    expect(stations.length, 1);
+    final station = stations.single as Map<dynamic, dynamic>;
+    expect(station['fullScreen'], true);
+    expect(station['channel'], ReminderChannel.alarm.name);
+    expect(station['atMillis'],
+        DateTime(2026, 11, 12, 9, 0).millisecondsSinceEpoch);
   });
 }

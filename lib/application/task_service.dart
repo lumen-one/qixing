@@ -225,7 +225,7 @@ class TaskService {
   /// 换无排序档的提醒提前量（设置页『提醒与排序』节）。
   ///
   /// 提醒时刻直接由 `deadline − 提前量` 算出，不存锚点；改完只要发一次重算事件，
-  /// 单闹钟就会按新时刻重挂。
+  /// 重锚会把站点表换成新时刻。
   Future<void> updateManualLead(int minutes,
       {EventOrigin origin = EventOrigin.user}) async {
     if (minutes == manualLeadMinutes) return;
@@ -732,54 +732,52 @@ class TaskService {
   /// **没有提醒门槛**：两档都提醒，能不能升级成闹钟由送达时按任务的
   /// metadata `alarm` 挑渠道决定。
   PointReminder? nextPointReminder() {
-    final current = now();
-    final manual = scheduleMode.isManual;
-    PointReminder? best;
-    for (final t in _tasks) {
-      if (t.isCompleted) continue;
-      final at = manual ? _manualReminderAt(t) : t.pointReminderAt;
-      if (at == null) continue;
-      if (t.pointFiredMark == at.toIso8601String()) continue; // 只到点响一次
-      if (at.isBefore(current.subtract(pointReminderGrace))) continue; // 错过
-      if (best == null || at.isBefore(best.at)) {
-        best = PointReminder(taskId: t.id, at: at);
-      }
-    }
-    return best;
+    final all = allPointReminders();
+    return all.isEmpty ? null : all.first;
   }
 
-  /// 无排序档的提醒时刻：**两站**，截止型与开始型同一套（§3.1）。
-  ///
-  /// 站 = `[T − manualLeadMinutes, T]`，`T` 取任务自己的时刻（两种类型都存在
-  /// `deadline` 里）。规则：
-  /// - 已响过的那一站写在 metadata `point_fired`，**按先后推进**——`fired` 之前的
-  ///   站都算响过，下一个更大的站才是候选；
-  /// - **推迟优先**：`snoozedUntil` 晚于当前候选站时，就把这一站的时刻挪到推迟到
-  ///   那一刻。推迟到 `T` 之后时，`T` 那一站自然被越过（再也找不到更大的站）——
-  ///   这正是"推迟之后 T 不再单独响"；
-  /// - **提前那一站越界就不排**：`T − 提前量` 早于这件任务出生（进提前量窗口里才
-  ///   建的单、或提前量刚被调大），这一站整个不排，只留 `T`。判据必须是 `created`
-  ///   而不是"现在"：用 now 会让同一站随"什么时候重算"一路漂，响完再重算就再响
-  ///   一次——这比不响更难查。
-  DateTime? _manualReminderAt(Task t) {
-    final stations = _manualStations(t);
-    if (stations.isEmpty) return null;
-    final firedAt = DateTime.tryParse(t.pointFiredMark ?? '');
-    DateTime? next;
-    for (final at in stations) {
-      if (firedAt != null && !at.isAfter(firedAt)) continue;
-      next = at;
-      break;
+  /// 站点表用：未来所有时点站一次排全（升序）。判据与 [nextPointReminder] 同一份，
+  /// 只是不再只取最早那一站——原生存下整表后，应用不在时这些站照常到点投递。
+  List<PointReminder> allPointReminders() {
+    final cutoff = now().subtract(pointReminderGrace);
+    final out = <PointReminder>[];
+    for (final t in _tasks) {
+      if (t.isCompleted) continue;
+      for (final at in _pointStations(t)) {
+        if (at.isBefore(cutoff)) continue; // 错过
+        out.add(PointReminder(taskId: t.id, at: at));
+      }
     }
-    if (next == null) return null;
+    out.sort((a, b) => a.at.compareTo(b.at));
+    return out;
+  }
+
+  /// 一件任务未来还会响的站（升序）。标准档只有 `pointReminderAt` 一站；无排序档
+  /// 是 `[T − 提前量, T]` 两站，规则见 [architecture.md](../docs/architecture.md) §3.1：
+  /// 已响过的那一站写在 metadata `point_fired`，**按先后推进**——`fired` 之前的站
+  /// 都算响过，下一个更大的站才是候选；推迟优先，`snoozedUntil` 晚于当前候选站
+  /// 时把这一站挪到推迟到那一刻，被越过的站不再单独响（docs/architecture.md §3.1）。
+  List<DateTime> _pointStations(Task t) {
+    if (!scheduleMode.isManual) {
+      final at = t.pointReminderAt;
+      if (at == null) return const [];
+      return t.pointFiredMark == at.toIso8601String() ? const [] : [at];
+    }
+    final firedAt = DateTime.tryParse(t.pointFiredMark ?? '');
+    final pending = _manualStations(t)
+        .where((at) => firedAt == null || at.isAfter(firedAt))
+        .toList();
+    if (pending.isEmpty) return const [];
     final s = t.snoozedUntil;
-    if (s != null && s.isAfter(next)) return s;
-    return next;
+    if (s == null || !s.isAfter(pending.first)) return pending;
+    return [s, ...pending.where((at) => at.isAfter(s))];
   }
 
   /// 无排序档的站表（升序）：截止型与开始型都有 `T − 提前量` 与 `T` 两站；
   /// 周期实例只有 `T` 一站、且**规则设了响才排**（规则自己就是"到点响一次"，
-  /// 不吃全局提前量）；散件（无截止）与'长期'任务不排站。
+  /// 不吃全局提前量）；散件（无截止）与'长期'任务不排站。提前那一站早于任务出生
+  /// （进提前量窗口里才建的单、或提前量刚被调大）就不排，判据用 `created` 而不是
+  /// "现在"：用 now 会让同一站随重算一路漂，响完再重算就再响一次。
   List<DateTime> _manualStations(Task t) {
     final d = t.deadline;
     if (d == null) return const [];

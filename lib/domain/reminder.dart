@@ -34,7 +34,7 @@ class ReminderEvent {
   });
 }
 
-/// 时点性提醒候选（TaskService 派生，§4.3 单闹钟协调者的第二个输入）：
+/// 时点性提醒候选（TaskService 派生，§4.3 站点表协调者的第二个输入）：
 /// 到点时刻 + 目标任务。逾期太久（超过 [pointReminderGrace]）的不再补响。
 class PointReminder {
   final String taskId;

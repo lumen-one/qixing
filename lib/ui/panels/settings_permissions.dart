@@ -138,6 +138,28 @@ class _SettingsPermissionsSectionState
               ],
             ),
           ),
+        // 上面六项走标准权限 API；国产 ROM 另外还有一套后台管控，既查不准也改不了，
+        // 只能把人带到系统设置页手动放行。桌面没有这个能力，整行不摆。
+        if (_c.backgroundSettingsOpener != null)
+          ListTile(
+            leading: const Icon(Icons.settings_applications_outlined),
+            title: const Text('后台保活'),
+            subtitle: Text(
+              'OPPO / ColorOS 还要手动放行：自启动、允许后台运行、关联启动、'
+              '关闭耗电保护、锁定后台卡片。',
+              style: theme.textTheme.bodySmall,
+            ),
+            trailing: TextButton(
+              onPressed: () async {
+                final ok = await _c.openBackgroundSettings();
+                if (context.mounted && !ok) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('没能打开系统设置页')));
+                }
+              },
+              child: const Text('去设置'),
+            ),
+          ),
       ],
     );
   }

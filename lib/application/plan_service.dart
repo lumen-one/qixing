@@ -7,7 +7,7 @@ import '../repository/plan_repository.dart';
 ///
 /// **与 TaskService 完全独立**：编排条目不是任务，这里不重锚调度、不发领域事件、
 /// 不碰 `.gtd/`。它只做三件事：读整份 `编排.md`、改一天、整份写回；外加一件只读的事——
-/// 给单闹钟递"下一条到点的条目"（[nextReminder]）。
+/// 给站点表递"所有未来到点的条目"（[allReminders]）。
 ///
 /// 每日循环（[repeatTemplate]）是同一份文件里的 `### 循环` 段：模板不生成副本，由
 /// [ensureRepeatFor] 在某一天还没有段时整份复制过去。改动只留在当天，模板只在
@@ -21,7 +21,7 @@ class PlanService {
 
   PlanDocument _doc = PlanDocument();
 
-  /// 编排变了（读盘 / 任何命令之后）。单闹钟协调者据此重挂下一站——它不认识编排，
+  /// 编排变了（读盘 / 任何命令之后）。站点表协调者据此重挂整表——它不认识编排，
   /// 只认这个信号（决定卡 2026-10-29-plan-reminder）。
   final _changes = StreamController<void>.broadcast();
 
@@ -65,11 +65,19 @@ class PlanService {
 
   /// 下一条到点的条目：**严格晚于 [now]** 的最早一条；没有 → null。
   ///
+  /// 判据全在 [allReminders] 里，这里只取表头，避免两套口径漂移。
+  PlanReminder? nextReminder(DateTime now) {
+    final all = allReminders(now);
+    return all.isEmpty ? null : all.first;
+  }
+
+  /// 站点表用：未来所有编排站一次排全（升序）。
+  ///
   /// **只排未来**是这一源的全部幂等机制：响过的条目自然落在过去，重排时再也挑不到它，
   /// 所以 `编排.md` 不需要"已响"标记（代价：错过不补响，登记在 arch §11）。
-  /// 同一分钟有多条时取文件里的第一条——它们的 [PlanReminder.id] 相同，站点只有一个。
-  PlanReminder? nextReminder(DateTime now) {
-    PlanReminder? best;
+  /// 同一分钟的多条共用一个 [PlanReminder.id]，只留文件里的第一条。
+  List<PlanReminder> allReminders(DateTime now) {
+    final byId = <String, PlanReminder>{};
     for (final d in _doc.days) {
       final day = planDay(d.day);
       for (final e in d.entries) {
@@ -77,16 +85,13 @@ class PlanService {
         if (m == null) continue;
         final at = DateTime(day.year, day.month, day.day, m ~/ 60, m % 60);
         if (!at.isAfter(now)) continue;
-        if (best == null || at.isBefore(best.at)) {
-          best = PlanReminder(
-            id: planReminderId(day, m),
-            at: at,
-            title: e.title,
-          );
-        }
+        final id = planReminderId(day, m);
+        byId.putIfAbsent(
+            id, () => PlanReminder(id: id, at: at, title: e.title));
       }
     }
-    return best;
+    final out = byId.values.toList()..sort((a, b) => a.at.compareTo(b.at));
+    return out;
   }
 
   /// 追加一条：按时刻归位（同刻的排在已有那几条之后）。

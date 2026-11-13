@@ -76,8 +76,7 @@
         <receiver
             android:name=".ActionReceiver"
             android:exported="false"/>
-        <!-- 开机 / 应用更新后把把手服务拉回来：只在用户开过把手时动手，
-             不重挂闹钟（architecture.md §11） -->
+        <!-- 开机 / 应用更新后按站点表重挂闹钟 + 拉回把手服务：把手只在用户开过时才拉 -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"

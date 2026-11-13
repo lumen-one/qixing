@@ -5,7 +5,7 @@ import android.content.Intent
 /**
  * 一条提醒的全部渲染数据（原生侧 DTO）。
  *
- * 由 MethodChannel `gtd/native` 的 scheduleAlarm / showNotification 参数构造，
+ * 由 MethodChannel `gtd/native` 的 scheduleStations / showNotification 参数构造，
  * 经 PendingIntent extras 在闹钟触发时原样传给 [ReminderReceiver]。
  * Dart 侧会持续发相同字段，这里只做搬运，不做业务判断。
  */
@@ -57,10 +57,16 @@ object ReminderExtras {
 
     /**
      * 响铃时长（秒）：挂闹钟时由 Dart 一起写进来（见 `AlarmRingService.start` /
-     * `NativeBridge.scheduleAlarm`）。应用被杀时接收器没有别的地方问这个值——
+     * `NativeBridge.scheduleStations`）。应用被杀时接收器没有别的地方问这个值——
      * 手机上的 `settings.json` 归 Dart 那一层读。
      */
     const val RING_SECONDS = "ringSeconds"
+
+    /** 站点表里这一站的原始时刻：接收器按它 + taskId 定位该把哪一格标成已投。 */
+    const val AT_MILLIS = "atMillis"
+
+    /** 站点表的主键（`<taskId>@<atMillis>`），由 `AlarmStationStore` 生成。 */
+    const val STATION_KEY = "stationKey"
 }
 
 /**

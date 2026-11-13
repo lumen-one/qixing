@@ -1,8 +1,6 @@
 package com.lumenone.qixing
 
 import android.app.Activity
-import android.app.AlarmManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -25,7 +23,7 @@ import java.io.File
 
 /**
  * `gtd/native`（Dart → 原生）与 `gtd/native/events`（原生 → Dart）两条 MethodChannel 的实现，
- * 外加闹钟 PendingIntent 的构造/取消辅助方法。
+ * 外加闹钟广播 Intent 的构造辅助方法（站点表的挂钟/取消归 `AlarmStationStore`）。
  *
  * 生命周期约定：
  * - 每个 [MainActivity] 创建时 new 一个实例；channel 注册在 configureFlutterEngine 里；
@@ -43,9 +41,6 @@ class NativeBridge(
         const val CHANNEL_EVENTS = "gtd/native/events"
 
         private const val TAG = "gtd"
-
-        /** 全局唯一闹钟（契约要求：新闹钟先取消旧的）。 */
-        private const val ALARM_REQUEST_CODE = 0
 
         /** 灵感文件选择器（`pickMarkdownFile`）。 */
         private const val PICK_FILE_REQUEST_CODE = 1
@@ -164,7 +159,7 @@ class NativeBridge(
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
         try {
             when (call.method) {
-                "scheduleAlarm" -> result.success(scheduleAlarm(call))
+                "scheduleStations" -> result.success(scheduleStations(call))
                 "cancelAlarm" -> result.success(cancelAlarm())
                 "showNotification" -> result.success(showNotification(call))
                 "cancelNotification" -> result.success(cancelNotification(call))
@@ -179,6 +174,7 @@ class NativeBridge(
                 "setHandleLocked" -> result.success(setHandleLocked(call))
                 "setHandleHotWidth" -> result.success(setHandleHotWidth(call))
                 "isIgnoringBatteryOptimizations" -> result.success(isIgnoringBatteryOptimizations())
+                "openBackgroundSettings" -> result.success(openBackgroundSettings())
                 "appVersion" -> result.success(appVersion())
                 "pickMarkdownFile" -> {
                     // 异步：结果从 onActivityResult 回来，这里先不回话。
@@ -201,54 +197,57 @@ class NativeBridge(
 
     // ------------------------------------------------------------------- 闹钟
 
-    /** @return true = 已武装（精确或尽力而为）；false = 硬失败（如系统异常）。 */
-    private fun scheduleAlarm(call: MethodCall): Boolean {
-        val reminder = readReminder(call, requireAt = true) ?: return false
-        val atMillis = call.argument<Number>("atMillis")?.toLong() ?: return false
-        // 响铃时长随闹钟一起写进 extras：到点那一刻应用可能已经不在了，原生没有别的地方
-        // 问这个值（settings.json 归 Dart 读）。
-        val ringSeconds = call.argument<Number>("ringSeconds")?.toInt() ?: DEFAULT_RING_SECONDS
-        // 契约：全局单闹钟，先撤销旧的（哪怕这次失败，旧闹钟也不该残留）。
-        cancelAlarm()
-
-        val manager = activity.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
-        val pendingIntent = alarmPendingIntent(reminder, ringSeconds)
-        return try {
-            if (canScheduleExact(manager)) {
-                manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntent)
-            } else {
-                // 未授予精确闹钟权限时的降级：窗口化尽力而为，仍然算成功。
-                manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntent)
+    /**
+     * 整张站点表一次下发，交给 [AlarmStationStore] 存盘并逐站挂上。
+     *
+     * 响铃时长也随表落盘：到点那一刻应用可能已经不在，原生没有别的地方问这个值
+     * （settings.json 归 Dart 读）。
+     */
+    private fun scheduleStations(call: MethodCall): Boolean {
+        val raw = call.argument<List<Any?>>("stations") ?: return false
+        val seconds = call.argument<Number>("ringSeconds")?.toInt() ?: DEFAULT_RING_SECONDS
+        val stations = JSONArray()
+        for (item in raw) {
+            val map = item as? Map<*, *> ?: continue
+            val at = (map["atMillis"] as? Number)?.toLong() ?: continue
+            val taskId = map["taskId"] as? String ?: continue
+            val station = JSONObject()
+            station.put("at", at)
+            station.put(ReminderExtras.TASK_ID, taskId)
+            station.put(ReminderExtras.TITLE, map["title"] as? String ?: "该做这件事了")
+            (map["body"] as? String)?.let { station.put(ReminderExtras.BODY, it) }
+            station.put(
+                ReminderExtras.CHANNEL,
+                (map["channel"] as? String ?: "ring").lowercase(),
+            )
+            station.put(ReminderExtras.FULL_SCREEN, map["fullScreen"] == true)
+            val ids = ArrayList<String>()
+            val labels = ArrayList<String>()
+            val actions = map["actions"] as? List<*>
+            if (actions != null) {
+                for (action in actions) {
+                    val a = action as? Map<*, *> ?: continue
+                    val id = a["id"] as? String ?: continue
+                    ids += id
+                    labels += a["label"] as? String ?: id
+                }
             }
-            true
-        } catch (t: Throwable) {
-            Log.w(TAG, "scheduleAlarm failed at=$atMillis", t)
-            false
+            station.put(ReminderExtras.ACTION_IDS, JSONArray(ids))
+            station.put(ReminderExtras.ACTION_LABELS, JSONArray(labels))
+            station.put("fired", false)
+            stations.put(station)
         }
+        return AlarmStationStore.replaceAndSchedule(activity, stations, seconds)
     }
 
+    /** 取消表里的所有闹钟（不清表：开机恢复还要照它挂回来）。 */
     private fun cancelAlarm(): Boolean = try {
-        val manager = activity.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
-        // PendingIntent 的身份只看 requestCode / action / data / component，extras 不参与
-        // 匹配，所以占位 Reminder 也能命中那个闹钟（FLAG_UPDATE_CURRENT 顺手覆盖 extras）。
-        val placeholder = Reminder("", "", null, ReminderChannel.RING, false, emptyList())
-        manager.cancel(alarmPendingIntent(placeholder))
+        AlarmStationStore.cancelAll(activity)
         true
     } catch (t: Throwable) {
         Log.w(TAG, "cancelAlarm failed: ${t.message}")
         false
     }
-
-    private fun canScheduleExact(manager: AlarmManager): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            try {
-                manager.canScheduleExactAlarms()
-            } catch (_: Throwable) {
-                false
-            }
-        } else {
-            true
-        }
 
     // ------------------------------------------------------------------- 通知
 
@@ -344,6 +343,46 @@ class NativeBridge(
         } catch (_: Throwable) {
             false
         }
+
+    /**
+     * 国产 ROM 的自启动 / 允许后台运行 / 关闭耗电保护没有标准 API，也查不准状态：
+     * 尽量打开厂商的安全中心，打不开就退到本应用的系统详情页，让人自己找那几项。
+     * OPPO 的省电策略不看 `isIgnoringBatteryOptimizations`，这个 flag 常常显示已授予
+     * 却照样把进程冻住，所以只能引导手动放行。
+     */
+    private fun openBackgroundSettings(): Boolean {
+        for (pkg in listOf(
+            "com.coloros.oppoguardelf",
+            "com.oppo.safe",
+            "com.coloros.safecenter",
+            "com.miui.securitycenter",
+        )) {
+            val launch = try {
+                activity.packageManager.getLaunchIntentForPackage(pkg)
+            } catch (_: Throwable) {
+                null
+            } ?: continue
+            try {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                activity.startActivity(launch)
+                return true
+            } catch (_: Throwable) {
+                // 包在但入口被 ROM 改过：接着试下一个。
+            }
+        }
+        return try {
+            activity.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:${activity.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "open app details failed: ${t.message}")
+            false
+        }
+    }
 
     // ------------------------------------------------------------------- 关于
 
@@ -529,16 +568,6 @@ class NativeBridge(
         )
     }
 
-    private fun alarmPendingIntent(
-        reminder: Reminder,
-        ringSeconds: Int = DEFAULT_RING_SECONDS,
-    ): PendingIntent = PendingIntent.getBroadcast(
-        activity,
-        ALARM_REQUEST_CODE,
-        alarmIntent(activity, reminder, ringSeconds),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
-
     // -------------------------------------------------------- 文件选择（灵感页）
 
     /**
@@ -642,9 +671,9 @@ class NativeBridge(
 /**
  * 构造闹钟广播 Intent。
  *
- * 注意：PendingIntent 的"身份"由 requestCode + action + data + component 决定，
- * extras 不参与匹配。因此这里固定 action 串，让"取消旧闹钟"能命中同一个 PendingIntent，
- * 而 extras 走 FLAG_UPDATE_CURRENT 覆盖。
+ * 站点表里每一站的 PendingIntent 身份由**表下标**（requestCode）区分，extras 不参与
+ * 匹配，所以这里固定 action 串，取消与开机恢复都能按同一套规则命中。站点自己的
+ * 时刻与主键由 `AlarmStationStore` 在挂钟那一刻补进 extras。
  *
  * [ringSeconds] 一起带上：到点那一刻应用可能已经被杀，接收器没有别的地方问响铃时长。
  */

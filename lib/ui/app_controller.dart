@@ -1430,6 +1430,14 @@ class AppController extends ChangeNotifier {
     return ok;
   }
 
+  /// 装配点注入：跳厂商的后台保活设置页（安卓原生；桌面无此能力 = null）。
+  Future<bool> Function()? backgroundSettingsOpener;
+
+  /// OPPO / ColorOS 的自启动、允许后台运行、关联启动、耗电保护没有标准 API，
+  /// 应用既查不准也改不了，只能把人带到系统设置页手动放行。
+  Future<bool> openBackgroundSettings() async =>
+      await backgroundSettingsOpener?.call() ?? false;
+
   /// 选择任务目录：写 bootstrap.json，提示重启生效（仓储在装配时绑定目录）。
   Future<String?> pickTaskDir() async {
     final picked = await folderPicker?.pickDirectory();

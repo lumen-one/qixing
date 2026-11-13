@@ -9,7 +9,8 @@ import android.util.Log
 /**
  * 系统闹钟到点时的落地点（进程可能完全没起来）。
  *
- * 职责：起铃（闹钟渠道）→ 投递通知 → 给 Dart 发 `alarmFired` 事件。不重排任何闹钟。
+ * 职责：起铃（闹钟渠道）→ 投递通知 → 把站点表这一格标成已投 → 给 Dart 发
+ * `alarmFired` 事件。**不重排闹钟**：其余站点在挂表时就各自挂好了。
  *
  * **不判断"该不该响"**：这一条走哪个渠道、是不是时点提醒，全由 Dart 在挂闹钟那一刻
  * 写进 [ReminderDraft] 的草案决定，这里只照草案执行（应用被杀时它是唯一的信息来源）。
@@ -51,6 +52,12 @@ class ReminderReceiver : BroadcastReceiver() {
                 "alarm fired taskId=${delivery.reminder.taskId} posted=$posted ringing=${delivery.ringing}",
             )
             if (delivery.ringing) showPage(app, delivery.reminder)
+            // 这一站投过了：开机恢复时别再补投一遍。主键由站点表在挂钟时写进 extras，
+            // 老版本闹钟没有这个字段，markFired 会安静地什么都不做。
+            AlarmStationStore.markFired(
+                app,
+                intent.getStringExtra(ReminderExtras.STATION_KEY),
+            )
             // `delivered` 告诉 Dart 侧"这条已经弹过了"：Dart 只记账与排下一站，
             // 不再 show 一次（同 id 替换会重新响铃、把通知时刻刷成"现在"）。
             // 应用被杀时事件先进队列，等下次启动才被取走——那时更不能重弹。
@@ -87,11 +94,11 @@ class ReminderReceiver : BroadcastReceiver() {
      */
     private fun prepareDelivery(app: Context, intent: Intent, reminder: Reminder): Delivery {
         if (reminder.channel != ReminderChannel.ALARM) return Delivery(reminder, false)
-        // 全屏/锁屏显示权限被拒（Android 14 起可选）：不起铃、也不弹页，只留通知栏 +
-        // 横幅 + 提示音。没有页面就没有看得见的停止键，持续响铃只会让人找不到怎么关。
+        // 全屏/锁屏显示权限被拒（Android 14 起可选、ColorOS 默认常关）只影响**页面**：
+        // 照常起铃，停止键本来就在通知的动作按钮上（Notifier 的 stopRingIntent）。
+        // 以前这里连铃一起降级，OPPO 上就成了"闹钟完全不响"。showPage 自己会再判一次。
         if (!Notifier.canUseFullScreenIntent(app)) {
-            Log.i("gtd", "no full-screen intent permission, degrade taskId=${reminder.taskId}")
-            return Delivery(reminder, false)
+            Log.i("gtd", "no full-screen page permission, ring anyway taskId=${reminder.taskId}")
         }
         if (!AlarmRingService.claimPageMinute(app)) {
             Log.i("gtd", "same minute already has an alarm page, degrade taskId=${reminder.taskId}")

@@ -55,7 +55,7 @@ class ShownNotification {
 ///
 /// 桌面不需要它（到点后由应用程序自己 show）；**安卓需要**：系统闹钟到点时
 /// 应用可能已被杀，原生接收器只能照着挂闹钟时留下的草案自己弹通知——
-/// 因此 ReminderDispatcher 在 `scheduleNext` 时就要把标题/渠道/按钮定下来。
+/// 因此 ReminderDispatcher 在 `scheduleStations` 时就要把标题/渠道/按钮定下来。
 class ReminderDraft {
   final String taskId;
   final String title;
@@ -72,6 +72,20 @@ class ReminderDraft {
     this.fullScreen = false,
     this.actions = const [],
   });
+}
+
+/// 一个待触发的站点（§4.3）。静态站点（时点提醒、编排）重锚时一次排全交给
+/// 原生存盘，到点由原生自己投递，不依赖 Dart 进程还在。
+class AlarmStation {
+  final DateTime at;
+
+  /// 到点要交付什么，在挂站那一刻定稿。
+  final ReminderDraft draft;
+
+  const AlarmStation({required this.at, required this.draft});
+
+  /// 站点 id = 交付草案的目标，Dart 与原生回传事件都用它认人。
+  String get id => draft.taskId;
 }
 
 abstract class NotificationPort {
@@ -119,10 +133,11 @@ class FiredAlarm {
   const FiredAlarm(this.taskId, {this.delivered = false});
 }
 
-/// 系统闹钟插座。全局任一时刻只挂一个下一站闹钟（§4.3）。
+/// 系统闹钟插座（§4.3）。调用方一次下发整张站点表，适配器负责把它们保住：
+/// 安卓逐站挂进 AlarmManager 并存进原生 prefs，开机自行恢复；桌面只取最早一站。
 abstract class AlarmPort {
-  /// 挂下一站闹钟。[draft] 供"应用被杀时也能自己弹通知"的实现使用（安卓）。
-  Future<void> scheduleNext(DateTime at, String taskId, {ReminderDraft? draft});
+  /// 用整张站点表替换当前所有闹钟：先取消旧的，再逐站挂上。
+  Future<void> scheduleStations(List<AlarmStation> stations);
 
   Future<void> cancel();
 

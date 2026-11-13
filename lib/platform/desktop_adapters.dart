@@ -9,23 +9,28 @@ import '../domain/reminder.dart';
 /// 移动端将换成系统精确闹钟 / flutter_local_notifications 适配器。
 /// 本文件不受 architecture.md §2 矩阵约束（组装点装配），但不得被核心 import。
 
-/// 前台 Timer 闹钟：预约全局唯一闹钟，到点往 [fired] 发 taskId。
-/// 应用未运行时提醒不触发——桌面用"开机自启 + 常驻"弥补（规划），移动端无此问题。
+/// 前台 Timer 闹钟：只取站点表里最早的一站，到点往 [fired] 发站点 id。
+/// 桌面没有系统闹钟，进程不在就没有提醒；挂全表没有意义，到点由分发器重锚
+/// 补上下一站，这与移动端"原生存全表"是同一个契约在两种壳上的不同实现。
 ///
-/// 桌面没有"原生先自己弹一遍"这一层，投递只能由分发器做，所以事件一律
+/// 桌面也没有"原生先自己弹一遍"这一层，投递只能由分发器做，所以事件一律
 /// `delivered: false`。
 class TimerAlarmPort implements AlarmPort {
   Timer? _timer;
   final _fired = StreamController<FiredAlarm>.broadcast();
 
   @override
-  Future<void> scheduleNext(DateTime at, String taskId,
-      {ReminderDraft? draft}) async {
+  Future<void> scheduleStations(List<AlarmStation> stations) async {
     await cancel();
-    final delay = at.difference(DateTime.now());
+    if (stations.isEmpty) return;
+    AlarmStation first = stations.first;
+    for (final s in stations) {
+      if (s.at.isBefore(first.at)) first = s;
+    }
+    final delay = first.at.difference(DateTime.now());
     _timer = Timer(
       delay.isNegative ? Duration.zero : delay,
-      () => _fired.add(FiredAlarm(taskId)),
+      () => _fired.add(FiredAlarm(first.id)),
     );
   }
 

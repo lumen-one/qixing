@@ -63,7 +63,7 @@ void main() {
     expect(next.title, '早餐');
   });
 
-  test('命令与读盘都发变更信号（单闹钟靠它重挂）', () async {
+  test('命令与读盘都发变更信号（站点表靠它重挂）', () async {
     final svc = await started(const []);
     var signals = 0;
     final sub = svc.changes.listen((_) => signals++);

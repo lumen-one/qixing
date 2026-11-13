@@ -181,6 +181,9 @@ Future<void> main() async {
   // 启动时与"授予悬浮窗权限"之后由控制器各拉一次（`ensureOverlayHandle`）。
   controller.overlayHandleControl =
       bridge == null ? null : (enabled) => bridge.setOverlayHandle(enabled);
+  // 厂商后台保活设置页（国产 ROM 的自启动 / 后台运行没有标准权限可申请）。
+  controller.backgroundSettingsOpener =
+      bridge == null ? null : () => bridge.openBackgroundSettings();
   // 把手位置上锁（§6.0）：桌面无系统级把手 = null，设置项只落 settings.json。
   controller.handleLockControl =
       bridge == null ? null : (locked) => bridge.setHandleLocked(locked);
@@ -196,7 +199,7 @@ Future<void> main() async {
     alarm: alarm,
     notifications: notifications,
     // 编排是第三个提醒源：条目到点发一条静音消息（决定卡 2026-10-29-plan-reminder）。
-    // 只挂主引擎——悬浮引擎没有自己的一份闹钟。
+    // 只挂主引擎——悬浮引擎没有自己的站点表。
     plans: planService,
     // 持续响铃（§7.2）：桌面 null，只投通知。
     ring: ring,
