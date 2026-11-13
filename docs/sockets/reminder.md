@@ -11,12 +11,22 @@
 - 映射规则：nextReminderAt（或相对档位推算出的时刻）落在段内 → 原样；
   落在段外 → **顺延到下一时段开头（只顺延、不吞掉）**；
   绝对档位（明早 9 点 / 自选）原样响（见 ui-interaction.md）；
-- 与工时窗口交集为空属用户自选配置：同样按顺延处理，不报错、不静默丢弃。
+- 与工时窗口交集为空属用户自选配置：同样按顺延处理，不报错、不静默丢弃；
+- 规则由 `ReminderDispatcher` 在构造与设置变更时推进 `TaskService`：挂闹钟与
+  `pollReminder` 产出软提醒事件前用的是同一份。只顺延系统闹钟那一支的话，前台
+  20 秒 tick 会在静默段照原始锚点产出事件，随后重锚又把顺延到明早的闹钟取消掉。
 
 **ReminderDispatcher（单闹钟协调者）**：订阅 `scheduleReanchored` →
 `alarm.cancel()` → 计算送达时刻（三个提醒源，见下）→ `alarm.scheduleNext()`（带草案）；
 订阅 `alarm.fired` → `TaskService.pollReminder()` →（**系统还没投递过时**）
 `NotificationPort.show(...)`（带 actions：完成 / 推迟1小时）→ 再排下一站（链路自续）。
+
+重挂与到点回调各串一条链：重挂只认最新的一次，避免"取消旧的、挂新的"两步被别的
+重挂插进来拆开；到点事件逐条执行，应用被杀期间攒下的 `alarmFired` 会在
+`drainEvents` 里一次性灌进来，并发跑会被 `pollReminder` 的不可重入锁吞掉。
+挂闹钟的时刻至少推到"现在 + 1 秒"：时点提醒有 30 分钟补响宽限，把已经过去的时刻
+交给 `AlarmManager` 会立即触发，那一站的 `point_fired` 万一没写成就会绕成短循环；
+正文里的时刻仍用原定的那一站。
 
 **没有门槛，协调者也不必知道调度模式。** 下一站时刻全由 `ScheduleResult.nextReminderAt`、
 `TaskService.nextPointReminder()` 与 `PlanService.nextReminder()` 给出，`_reschedule()`
@@ -43,7 +53,9 @@
   那一条不会丢；
 - **`pollReminder` 不可重入**：20 秒 tick 与闹钟回调会同时打进来，而软提醒没有
   `point_fired` 那样的幂等标记——上一次还在跑时这一次直接返回 null
-  （少发一条，好过同一件事弹两次）；
+  （少发一条，好过同一件事弹两次）。分发器把到点回调串成一条链，所以冷启动
+  `drainEvents` 一次性灌进来的多条事件彼此不会撞上这把锁；tick 撞上来仍按
+  "少发一条"处理；
 - **闹钟的响铃与并列**：`alarm` 起全屏页的同时让 `AlarmRingPort` 循环播放，到 `alarm_ring_seconds`
   （默认 60）自停，『停止响铃』可提前停。同一分钟有多条 `alarm` 时只起一个全屏页，正文并排列出
   其余几件；那些件照常写 `point_fired`、照常排下一站，通知降级成普通渠道、不二次响铃。
