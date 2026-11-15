@@ -291,7 +291,8 @@ nextReminderAt = min(沿用旧锚点（仍有效时）否则 addWorkMinutes(now,
   **两条都会重算间隔，但不会重新决定锚点**：`TaskService._anchors` 把上次的锚点
   按任务存着，`Scheduler.schedule(anchors:)` 收到就沿用（判据见 §3.1 的"锚点跨重锚沿用"）。
   于是"命令 → 重算"与"文件监听 → 再重算一次"都不会把别人的提醒往后推。
-  锚点作废只有三种情形：这件任务的输入变了、它真的响过一次（`pollReminder` 软分支
+  锚点作废只有三种情形：这件任务的输入变了、它真的响过一次（软提醒那一站到点，
+  `pollReminder` 的软分支与到点回放的 `TaskService.advanceSoftReminder` 共用一份判据，
   先删再重算）、或旧锚点迟到超过 30 分钟（算错过）。
 - C3. **AI 无第二条写路径**：AI 的变更与人类点击走同一命令通道（详见 §6）。
 

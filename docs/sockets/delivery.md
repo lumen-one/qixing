@@ -53,13 +53,29 @@ class AlarmStation {
   final ReminderDraft draft;   // draft.taskId 就是站点 id
 }
 
+/// 一次闹钟到点回调。delivered = 系统侧已经把这条提醒弹给用户了（安卓原生接收器
+/// 照着挂站时的草案自己投递；桌面没有这一层，恒 false）。
+///
+/// 安卓的事件还带**站点身份**：哪一格、原定几点、该交付什么。应用被杀期间原生会
+/// 连续投递多站，事件攒在队列里、下次启动一次回放——只给 taskId 时 Dart 只能按
+/// "现在"重算该弹谁，几条叠在一起就会把账记到错的人头上
+/// （见 sockets/reminder.md）。
+class FiredAlarm {
+  final String taskId;
+  final bool delivered;
+  final DateTime? at;          // 站点表里这一格的原定时刻（ReminderExtras.AT_MILLIS）
+  final String? stationKey;    // 站点表主键 <taskId>@<atMillis>（ReminderExtras.STATION_KEY）
+  final ReminderDraft? draft;  // 挂站那一刻定稿的交付草案
+  bool get hasStation => at != null && draft != null;   // false = 桌面 / 升级前入队的事件
+}
+
 abstract class AlarmPort {
   /// 用整张站点表替换当前所有闹钟：先取消旧的，再逐站挂上。
   /// 安卓把表持久化到原生 prefs，开机 / 应用更新后自行恢复；桌面只取最早一站。
   Future<void> scheduleStations(List<AlarmStation> stations);
   Future<void> cancel();
-  /// 到点（安卓=系统闹钟回调；桌面=Timer）。delivered = 系统侧已经弹过通知
-  /// （安卓原生接收器照着草案自己投递），分发器只记账、不再 show。
+  /// 到点（安卓=系统闹钟回调；桌面=Timer）。带站点身份的事件由分发器按站记账，
+  /// 不带的（桌面、升级前入队）退回"按现在重算"。
   Stream<FiredAlarm> get fired;
 }
 
@@ -95,6 +111,17 @@ IMPORTANCE_HIGH——横幅必现，区别只在有没有声音与震动，`sile
 它从 `stopWithTask=false` 起就与 Activity 解绑，划掉任务卡片不停止服务，把手与面板
 照常（生命周期见 [architecture.md](../architecture.md) §5.1）。
 `platform/` 不受 [architecture.md](../architecture.md) §2 矩阵约束（组装点装配），但不得被 domain/scheduler/application import。
+
+**到点事件的载荷（`alarmFired`）**：原生接收器发事件时带上这一站的完整身份——除了
+`taskId` / `delivered`，还有 `stationKey`、`atMillis` 与草案六项（`title` / `body` /
+`channel` / `fullScreen` / `actionIds` / `actionLabels`）。键名全部沿用 `ReminderExtras`，
+草案从挂站的 intent 里读回来（`putReminderExtras` 已经写全），不另存一份。分发器靠它
+按站记账与补投；缺这几项的事件（桌面 Timer、升级前入队的事件）走旧路径。
+
+事件队列是"写 JSON 再读回"的一趟：`JSONObject` 会把字符串数组存成 `JSONArray`，
+`NativeEventQueue` 读回时递归转成 `ArrayList` 与 `LinkedHashMap`。原样交给
+`StandardMessageCodec` 会抛"不支持的类型"，`drainEvents` 在 Dart 侧被 catch 掉，
+整批事件一次都取不回来——看起来像"应用被杀期间什么都没发生"。
 
 **系统级悬浮面板（第二个 Flutter 引擎）**：[architecture.md](../architecture.md) §0 的产品定位是"日常操作发生在
 悬浮侧边栏里，App 主体几乎不开"，所以把手拖出必须**在当前 App 上方就地展开面板**，

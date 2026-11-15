@@ -18,8 +18,10 @@
 
 **ReminderDispatcher（站点表协调者）**：订阅 `scheduleReanchored` →
 `alarm.cancel()` → 算出三个提醒源能预排的所有站点 → `alarm.scheduleStations()`（每站带草案）；
-订阅 `alarm.fired` → `TaskService.pollReminder()` →（**系统还没投递过时**）
-`NotificationPort.show(...)`（带 actions：完成 / 推迟1小时）→ 重锚覆盖整表。
+订阅 `alarm.fired` → **按事件自己带的站点**记账（时点站写 `point_fired`、软提醒站推进
+锚点）→（**系统还没投递过时**）照那一站的草案 `NotificationPort.show(...)`（带 actions：
+完成 / 推迟1小时）→ 重锚覆盖整表。事件没带站点身份（桌面 Timer、升级前入队的）才退回
+`TaskService.pollReminder()` 按当前时刻重算。
 
 重挂与到点回调各串一条链：重挂只认最新的一次，避免"取消旧的、挂新的"两步被别的
 重挂插进来拆开；到点事件逐条执行，应用被杀期间攒下的 `alarmFired` 会在
@@ -53,10 +55,11 @@ Dart 进程在不在都不影响已排上的站。
   表只收未来 7 天、最多 40 站，超出的由下一次重锚补上。
 - **编排这一源只递未来的时刻**（`at` 严格晚于现在）。过点即作废、不补响，所以它不需要
   `point_fired` 那样的幂等标记，`编排.md` 也不落任何提醒状态。同一分钟的多条只排最早
-  那条；与任务提醒撞在同一分钟时编排优先占站点，到点那一刻仍会 `pollReminder`，任务的
-  那一条不会丢；
-- **`pollReminder` 不可重入**：20 秒 tick 与闹钟回调会同时打进来，而软提醒没有
-  `point_fired` 那样的幂等标记——上一次还在跑时这一次直接返回 null
+  那条；与任务提醒撞在同一分钟时编排优先占站点，落选的那一站不在表里——带站点身份的
+  事件只弹编排那一条，任务那一站由随后的重锚挂到 `now+1s` 补上（晚一秒，不会丢）；
+  没有站点身份时仍由 `pollReminder` 当场补弹；
+- **`pollReminder` 不可重入**：20 秒 tick 与不带站点身份的到点事件会同时打进来，
+  而软提醒没有 `point_fired` 那样的幂等标记——上一次还在跑时这一次直接返回 null
   （少发一条，好过同一件事弹两次）。分发器把到点回调串成一条链，所以冷启动
   `drainEvents` 一次性灌进来的多条事件彼此不会撞上这把锁；tick 撞上来仍按
   "少发一条"处理；
@@ -71,7 +74,17 @@ Dart 进程在不在都不影响已排上的站。
   `ReminderReceiver` 自己弹通知，`posted` 的返回值随 `alarmFired` 作为 `delivered` 回传。
   整张站点表由原生存进 prefs、用 `setAlarmClock()` 逐站挂上，开机与强停后由
   `BootReceiver` 恢复；到点只把表里的这一项标成已投，不重排其余站点。
-  **投递只做一次**：`delivered` 为真时 Dart 只记账（`pollReminder` 顺手写 `point_fired`）与
-  重锚覆盖整表，不再 `show`。同一 taskId 重复投递不是「无害的替换」——它会重新响铃，并把通知
-  上的时刻刷成当下，看上去就是「这条提醒迟到了」。应用不在时事件先进队列，启动后
-  `drainEvents` 补做，走的是同一条规则；按钮点击走 `ActionReceiver` → 事件回传。
+  **投递只做一次**：`delivered` 为真时 Dart 只记账与重锚覆盖整表，不再 `show`。
+  同一 taskId 重复投递不是「无害的替换」——它会重新响铃，并把通知上的时刻刷成当下，
+  看上去就是「这条提醒迟到了」。应用不在时事件先进队列，启动后 `drainEvents` 补做；
+  按钮点击走 `ActionReceiver` → 事件回传。
+- **回放按站记账**：`alarmFired` 除了 `taskId` / `delivered`，还带站点身份（`stationKey`、
+  原定时刻 `atMillis`）与挂站时的交付草案。分发器只认这一站：时点站按**原定时刻**写
+  `point_fired`（不是"现在"），软提醒站作废锚点、算出下一站，编排站没有 `point_fired`
+  可记；`delivered` 为假时照那一站的草案补投。应用被杀期间原生会连续投递多站，事件在
+  `drainEvents` 里一次回放——按"现在"重算会把每条都认成最早那一件，标记记到错的人头上，
+  真正响过的那件反而会再响一遍。哪一站是时点站由任务的站表回判（`TaskService.isPointStation`）：
+  站点表是快照，应用不在期间改过期的那一站认不出来，按软提醒处理（不写标记、照草案补投）。
+  同一站重复回放、或前台 tick 先处理过时，记账那一步返回 false，分发器就不再补投。
+  事件没带站点身份（桌面 Timer、升级前入队的事件）时退回旧路径：`pollReminder()`
+  按当前时刻重算该弹谁。
