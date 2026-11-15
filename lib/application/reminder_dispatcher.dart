@@ -13,8 +13,8 @@ import 'task_service.dart';
 ///
 /// 流向：TaskService 重锚（scheduleReanchored）/ PlanService 变更（changes）→
 /// alarm.cancel() → 算出三个提醒源的站点表 → alarm.scheduleStations()；
-/// alarm.fired → （编排那一站直接弹）TaskService.pollReminder() →
-/// NotificationPort.show(...) → 重锚覆盖整表。
+/// alarm.fired → 按事件自己带的站点记账（没有站点身份的退回 TaskService.pollReminder）
+/// → NotificationPort.show(...) → 重锚覆盖整表。
 ///
 /// 时点提醒与编排是静态站，一次排全；软提醒按裕度动态调频，只放当下算出的
 /// 那一站。安卓把表存进原生 prefs 并逐站挂进 AlarmManager，开机自行恢复，
@@ -239,40 +239,59 @@ class ReminderDispatcher {
   /// 只记账并排下一站；再 show 一次就是同 id 替换 + 重新响铃，通知时刻被刷成
   /// "现在"——用户看到的就是"这条提醒晚了十几分钟"。
   ///
-  /// 编排那一站不经过 `pollReminder`（那不是任务，没有可记账的状态）：照草案弹完就
-  /// 排下一站。**同一时刻的任务提醒不受影响**——poll 照跑，撞在同一分钟时两条都到。
+  /// **带站点身份的事件按站记账**：应用被杀期间原生会连续投递多站，事件在
+  /// `drainEvents` 里一次回放，每条都按同一个"现在"重算只会把账记到最早那一件上
+  /// （docs/sockets/reminder.md）。没有站点身份的事件（桌面 Timer、升级前入队的）
+  /// 走旧路径：`pollReminder` 按当前时刻重算该弹谁。
   Future<void> _handleFired(FiredAlarm firing) async {
-    final planStation =
-        isPlanReminderId(firing.taskId) ? _planStations[firing.taskId] : null;
-    if (planStation != null && !firing.delivered) {
-      await _showPlan(planStation);
-    }
-    final event = await service.pollReminder();
-    // delivered 说的是"刚起来的那一站已经弹过了"，不是"这一趟什么都别弹"：
-    // 编排那一站弹过了，同时到点的任务提醒还没弹，所以只在任务自己那一站上跳过。
-    if (event != null && !(firing.delivered && planStation == null)) {
-      await _showTask(event);
+    if (firing.hasStation) {
+      await _handleStationFired(firing);
+    } else {
+      final planStation =
+          isPlanReminderId(firing.taskId) ? _planStations[firing.taskId] : null;
+      if (planStation != null && !firing.delivered) {
+        await _showPlan(planStation);
+      }
+      final event = await service.pollReminder();
+      // delivered 说的是"刚起来的那一站已经弹过了"，不是"这一趟什么都别弹"：
+      // 编排那一站弹过了，同时到点的任务提醒还没弹，所以只在任务自己那一站上跳过。
+      if (event != null && !(firing.delivered && planStation == null)) {
+        await _showTask(event);
+      }
     }
     await _reschedule(); // 链路自续：排下一站（防 Zeno：只在事件里重排）
   }
 
-  Future<void> _showTask(ReminderEvent event) async {
-    final point = event.kind == ReminderKind.point;
-    final task = service.byId(event.taskId);
-    var channel = _channelFor(task, point: point);
-    final now = service.now();
-    if (channel == ReminderChannel.alarm) {
-      final minute = DateTime(now.year, now.month, now.day, now.hour, now.minute);
-      if (_alarmMinute == minute && _alarmCovered.contains(event.taskId)) {
-        // 本分钟已经起过闹钟，这一件已在上一页的正文里露过面：只留普通通知。
-        // 不影响它自己的 point_fired 与下一站。
-        channel = ReminderChannel.ring;
-      } else {
-        _alarmMinute = minute;
-        _alarmCovered = _sameMinuteAlarmIds(task, at: now);
-        await ring?.start(event.taskId, seconds: ringSeconds);
-      }
+  /// 带站点身份的一条：只认**这一站**——时点站按原定时刻写 `point_fired`，
+  /// 软提醒站作废锚点、算出下一站，编排站没有账可记；系统没弹成时照这一站的
+  /// 草案补投，不再按"现在"重算该弹谁。
+  Future<void> _handleStationFired(FiredAlarm firing) async {
+    final draft = firing.draft!;
+    final at = firing.at!;
+    if (isPlanReminderId(firing.taskId)) {
+      if (!firing.delivered) await _deliverDraft(draft);
+      return;
     }
+    final task = service.byId(firing.taskId);
+    if (task == null || task.isCompleted) return; // 已删 / 已完成：没账可记，也不该再打扰
+    final first = service.isPointStation(firing.taskId, at)
+        // 到点只响一次：记的是**这一站的原定时刻**，不是"现在"。
+        ? await service.markPointFired(firing.taskId, at)
+        // 软提醒那一站没有 point_fired：响过之后作废锚点、算出下一站。
+        : await service.advanceSoftReminder(firing.taskId);
+    // 这一站已经记过账（重复回放、或前台 tick 先到）就不再补投：同 id 再弹一次
+    // 会重新响铃、把通知时刻刷成"现在"。
+    if (first && !firing.delivered) await _deliverDraft(draft);
+  }
+
+  Future<void> _showTask(ReminderEvent event) async {
+    final now = service.now();
+    final task = service.byId(event.taskId);
+    final channel = await _alarmChannelFor(
+      event.taskId,
+      _channelFor(task, point: event.kind == ReminderKind.point),
+      at: now,
+    );
     final alarmOn = channel == ReminderChannel.alarm;
     await notifications.show(
       event,
@@ -288,6 +307,53 @@ class ReminderDispatcher {
         actions: defaultActions,
       ),
     );
+  }
+
+  /// 照站点草案交付（补投用）：内容在挂站那一刻就定稿了，不查任务、也不按
+  /// "现在"重算渠道——那一站当时该是什么，就还弹什么。
+  Future<void> _deliverDraft(ReminderDraft draft) async {
+    final now = service.now();
+    final channel = await _alarmChannelFor(draft.taskId, draft.channel, at: now);
+    final alarmOn = channel == ReminderChannel.alarm;
+    await notifications.show(
+      ReminderEvent(
+        firedAt: now,
+        taskId: draft.taskId,
+        kind: ReminderKind.point,
+      ),
+      actions: draft.actions,
+      channel: channel,
+      fullScreen: alarmOn,
+      draft: ReminderDraft(
+        taskId: draft.taskId,
+        title: draft.title,
+        body: draft.body,
+        channel: channel,
+        fullScreen: alarmOn,
+        actions: draft.actions,
+      ),
+    );
+  }
+
+  /// 闹钟渠道的落地：同一分钟只留一个全屏页、只起一股铃声。
+  ///
+  /// 返回实际用的渠道：本分钟已经起过闹钟、这一件又在那一页的正文里露过面时，
+  /// 降级成普通通知（不影响它自己的 `point_fired` 与下一站）。
+  Future<ReminderChannel> _alarmChannelFor(
+    String taskId,
+    ReminderChannel wanted, {
+    required DateTime at,
+  }) async {
+    if (wanted != ReminderChannel.alarm) return wanted;
+    final minute = DateTime(at.year, at.month, at.day, at.hour, at.minute);
+    if (_alarmMinute == minute && _alarmCovered.contains(taskId)) {
+      // 本分钟已经起过闹钟，这一件已在上一页的正文里露过面：只留普通通知。
+      return ReminderChannel.ring;
+    }
+    _alarmMinute = minute;
+    _alarmCovered = _sameMinuteAlarmIds(service.byId(taskId), at: at);
+    await ring?.start(taskId, seconds: ringSeconds);
+    return ReminderChannel.alarm;
   }
 
   /// 编排条目：一条消息，没有按钮、不接闹钟模式（即使设置里开着）。

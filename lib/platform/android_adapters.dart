@@ -231,15 +231,63 @@ class AndroidAlarmPort implements AlarmPort {
   }
 
   /// 原生接收器到点会**先自己投递**通知（应用被杀也照弹），再回传事件；
-  /// `delivered` 就是从这次投递的返回值来的。
+  /// `delivered` 就是从这次投递的返回值来的。事件还带这一站的原定时刻与交付草案，
+  /// 分发器据此按站记账（`docs/sockets/delivery.md`）。
   @override
   Stream<FiredAlarm> get fired => bridge.events
       .where((e) => e['type'] == 'alarmFired')
-      .map((e) => FiredAlarm(
-            e['taskId'] as String? ?? '',
-            delivered: e['delivered'] as bool? ?? false,
-          ))
+      .map(_firedFrom)
       .where((f) => f.taskId.isNotEmpty);
+
+  /// `alarmFired` → [FiredAlarm]。键名与原生 `ReminderExtras` 一致；缺项
+  /// （升级前入队的事件，那时只有 taskId 与 delivered）留 null，分发器走旧路径。
+  static FiredAlarm _firedFrom(Map<String, Object?> event) {
+    final taskId = event['taskId'] as String? ?? '';
+    final atMillis = event['atMillis'];
+    final title = event['title'] as String?;
+    return FiredAlarm(
+      taskId,
+      delivered: event['delivered'] as bool? ?? false,
+      at: atMillis is num
+          ? DateTime.fromMillisecondsSinceEpoch(atMillis.toInt())
+          : null,
+      stationKey: event['stationKey'] as String?,
+      draft: (title == null || title.isEmpty)
+          ? null
+          : ReminderDraft(
+              taskId: taskId,
+              title: title,
+              body: event['body'] as String?,
+              channel: _channelOf(event['channel']),
+              fullScreen: event['fullScreen'] as bool? ?? false,
+              actions: _actionsOf(event['actionIds'], event['actionLabels']),
+            ),
+    );
+  }
+
+  /// 渠道名按小写认（原生写的是枚举名小写），认不出按普通提醒。
+  static ReminderChannel _channelOf(Object? raw) {
+    final name = raw is String ? raw.toLowerCase() : '';
+    for (final c in ReminderChannel.values) {
+      if (c.name == name) return c;
+    }
+    return ReminderChannel.ring;
+  }
+
+  /// 按钮按下标配对（两边长度不一致时缺的 label 退回 id，与原生同一口径）。
+  static List<NotificationAction> _actionsOf(Object? ids, Object? labels) {
+    if (ids is! List) return const [];
+    final out = <NotificationAction>[];
+    for (var i = 0; i < ids.length; i++) {
+      final id = ids[i];
+      if (id is! String || id.isEmpty) continue;
+      final label = labels is List && i < labels.length && labels[i] is String
+          ? labels[i] as String
+          : id;
+      out.add(NotificationAction(id: id, label: label));
+    }
+    return out;
+  }
 }
 
 /// 系统通知（动作按钮 / 全屏闹钟 / 点通知定位）。

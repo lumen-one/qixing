@@ -44,11 +44,33 @@ class _FakeAlarm implements AlarmPort {
   Stream<FiredAlarm> get fired => _fired.stream;
 
   /// 触发一次到点。[delivered] = 系统侧已经弹过通知（安卓原生接收器）。
-  /// [taskId] 用于模拟冷启动时一次性回放多条积压事件（那时挂的站早已换过）。
-  void fire({String? taskId, bool delivered = false}) {
-    _fired.add(FiredAlarm(taskId ?? this.taskId ?? '', delivered: delivered));
+  /// [taskId] 用于模拟冷启动时一次性回放多条积压事件（那时挂的站早已换过）；
+  /// [at]/[stationKey]/[draft] = 这一站的站点身份（原生 `alarmFired` 带回来的），
+  /// 只给 [taskId] 等于桌面 Timer / 升级前入队的老事件。
+  void fire({
+    String? taskId,
+    bool delivered = false,
+    DateTime? at,
+    String? stationKey,
+    ReminderDraft? draft,
+  }) {
+    _fired.add(FiredAlarm(
+      taskId ?? this.taskId ?? '',
+      delivered: delivered,
+      at: at,
+      stationKey: stationKey,
+      draft: draft,
+    ));
   }
 }
+
+/// 一站的原生回传草案：标题可以故意与任务标题不同，好断言"弹的是那一站的草案"。
+ReminderDraft _draftFor(String taskId, {String? title}) => ReminderDraft(
+      taskId: taskId,
+      title: title ?? taskId,
+      body: '草案正文',
+      actions: ReminderDispatcher.defaultActions,
+    );
 
 /// 假响铃端口：记录起铃与停铃。
 class _FakeRing implements AlarmRingPort {
@@ -622,5 +644,202 @@ void main() {
     expect(notifications.shownList, hasLength(2));
     expect(notifications.shownList.map((s) => s.event.taskId),
         containsAll(<String>[a.id, b.id]));
+  });
+
+  // 到点事件带站点身份（docs/sockets/reminder.md）：按**这一站**记账与补投。
+  test('回放单条事件只记它自己那一站，不替别的站记账', () async {
+    await startDispatcher();
+    final b = await svc.createTask(
+      title: 'B',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 17, 40),
+    );
+    final a = await svc.createTask(
+      title: 'A',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 17, 50),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    // B@17:40 那站的闹钟被 ROM 吞了，只有 A@17:50 响了，当时应用不在。
+    // 按"现在"重算会认成最早的 B：B 被记成已响（以后不再提醒），
+    // A 却没记上（宽限窗口内会再响一遍）。
+    final at = DateTime(2026, 10, 7, 17, 50);
+    now = DateTime(2026, 10, 7, 18, 0);
+    alarm.fire(
+      taskId: a.id,
+      delivered: true,
+      at: at,
+      stationKey: '${a.id}@${at.millisecondsSinceEpoch}',
+      draft: _draftFor(a.id),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(notifications.shownList, isEmpty, reason: '原生已经弹过，不再 show');
+    expect(svc.byId(a.id)!.pointFiredMark, at.toIso8601String(),
+        reason: '记的是这一站的原定时刻，不是"现在"');
+    expect(svc.byId(b.id)!.pointFiredMark, isNull,
+        reason: '没响的那一站不能替它记账');
+  });
+
+  test('冷启动回放多条带站点身份的事件：各按自己的站补投', () async {
+    await startDispatcher();
+    final a = await svc.createTask(
+      title: 'A',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 17, 50),
+    );
+    final b = await svc.createTask(
+      title: 'B',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 17, 55),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final atA = DateTime(2026, 10, 7, 17, 50);
+    final atB = DateTime(2026, 10, 7, 17, 55);
+    now = DateTime(2026, 10, 7, 18, 0);
+    // 两条都没弹成（渠道被关 / 前台服务起不来）：照各自的草案补投，
+    // 内容取自挂站那一刻，而不是"现在"重算出来的那一件。
+    alarm.fire(taskId: a.id, at: atA, draft: _draftFor(a.id, title: 'A 的站'));
+    alarm.fire(taskId: b.id, at: atB, draft: _draftFor(b.id, title: 'B 的站'));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(
+      notifications.shownList.map((s) => s.draft!.title),
+      ['A 的站', 'B 的站'],
+    );
+    expect(notifications.shownList.map((s) => s.event.taskId), [a.id, b.id]);
+    expect(svc.byId(a.id)!.pointFiredMark, atA.toIso8601String());
+    expect(svc.byId(b.id)!.pointFiredMark, atB.toIso8601String());
+  });
+
+  test('同一站重复回放：只补投一次，标记不倒退', () async {
+    await startDispatcher();
+    final a = await svc.createTask(
+      title: 'A',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 17, 50),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final at = DateTime(2026, 10, 7, 17, 50);
+    now = DateTime(2026, 10, 7, 17, 55);
+    alarm.fire(taskId: a.id, at: at, draft: _draftFor(a.id));
+    alarm.fire(taskId: a.id, at: at, draft: _draftFor(a.id));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(notifications.shownList, hasLength(1), reason: '同 id 再弹会重新响铃');
+  });
+
+  test('编排站回放：没投过照草案补一条，投过只排下一站', () async {
+    final plans = await startPlans(const [
+      PlanEntry(title: '项目评审', minutesOfDay: 17 * 60),
+      PlanEntry(title: '写周报', minutesOfDay: 18 * 60),
+    ]);
+    await startDispatcher(plans: plans);
+    await Future<void>.delayed(Duration.zero);
+
+    final first = alarm.draft!;
+    final firstId = alarm.taskId!;
+    expect(first.title, '项目评审');
+
+    now = DateTime(2026, 10, 7, 17, 5);
+    alarm.fire(
+      taskId: firstId,
+      delivered: true,
+      at: DateTime(2026, 10, 7, 17, 0),
+      draft: first,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(notifications.shownList, isEmpty, reason: '原生已经弹过');
+
+    // 重锚后表里只剩下一站（条目没有 point_fired，不靠记账推进）。
+    final next = alarm.draft!;
+    now = DateTime(2026, 10, 7, 18, 0);
+    alarm.fire(
+      taskId: alarm.taskId!,
+      at: DateTime(2026, 10, 7, 18, 0),
+      draft: next,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(notifications.shownList.single.draft!.title, '写周报');
+    expect(notifications.shownList.single.channel, ReminderChannel.silent);
+  });
+
+  test('编排与任务撞在同一刻（带站点身份）：任务那一站由重锚挂到下一秒', () async {
+    final meeting = await svc.createTask(
+      title: '例会',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 17, 0),
+    );
+    final plans = await startPlans(const [
+      PlanEntry(title: '项目评审', minutesOfDay: 17 * 60),
+    ]);
+    await startDispatcher(plans: plans);
+    await Future<void>.delayed(Duration.zero);
+
+    final planDraft = alarm.draft!;
+    expect(isPlanReminderId(planDraft.taskId), isTrue, reason: '同一刻编排先占站点');
+
+    now = DateTime(2026, 10, 7, 17, 0);
+    alarm.fire(
+      taskId: planDraft.taskId,
+      delivered: true,
+      at: DateTime(2026, 10, 7, 17, 0),
+      draft: planDraft,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(notifications.shownList, isEmpty, reason: '编排那一条原生已经弹过');
+    expect(alarm.taskId, meeting.id, reason: '落选的任务站不在表里，不能丢');
+    expect(alarm.scheduledAt, DateTime(2026, 10, 7, 17, 0, 1),
+        reason: '重锚把过点的站推到 now+1s，晚一秒照常到点');
+  });
+
+  test('软提醒那一站响过：不吃 point_fired，锚点推进到下一站', () async {
+    await startDispatcher();
+    final soft = await svc.createTask(
+      title: '写周报',
+      deadline: DateTime(2026, 10, 7, 18, 0),
+      estimatedWorkMinutes: 60,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(alarm.scheduledAt, DateTime(2026, 10, 7, 16, 30));
+    final draft = alarm.draft!;
+
+    now = DateTime(2026, 10, 7, 16, 35);
+    alarm.fire(
+      taskId: soft.id,
+      delivered: true,
+      at: DateTime(2026, 10, 7, 16, 30),
+      draft: draft,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(svc.byId(soft.id)!.pointFiredMark, isNull,
+        reason: '软提醒没有"已响那一站"这个标记');
+    expect(notifications.shownList, isEmpty);
+    expect(alarm.scheduledAt, isNotNull);
+    expect(alarm.scheduledAt!.isAfter(now), isTrue, reason: '锚点已推进到下一轮');
+  });
+
+  test('只带时刻不带草案（站点信息不全）：退回旧路径，照常弹', () async {
+    await startDispatcher();
+    final a = await svc.createTask(
+      title: 'A',
+      type: TaskType.fixed,
+      deadline: DateTime(2026, 10, 7, 17, 50),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    now = DateTime(2026, 10, 7, 17, 55);
+    alarm.fire(taskId: a.id, at: DateTime(2026, 10, 7, 17, 50));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(notifications.shownList.single.event.taskId, a.id);
+    expect(svc.byId(a.id)!.pointFiredMark,
+        DateTime(2026, 10, 7, 17, 50).toIso8601String());
   });
 }

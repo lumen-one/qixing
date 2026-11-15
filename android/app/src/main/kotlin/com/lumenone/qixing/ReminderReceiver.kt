@@ -61,14 +61,7 @@ class ReminderReceiver : BroadcastReceiver() {
             // `delivered` 告诉 Dart 侧"这条已经弹过了"：Dart 只记账与排下一站，
             // 不再 show 一次（同 id 替换会重新响铃、把通知时刻刷成"现在"）。
             // 应用被杀时事件先进队列，等下次启动才被取走——那时更不能重弹。
-            NativeEventQueue.publish(
-                app,
-                mapOf(
-                    "type" to "alarmFired",
-                    "taskId" to reminder.taskId,
-                    "delivered" to posted,
-                ),
-            )
+            NativeEventQueue.publish(app, alarmFiredEvent(intent, reminder, posted))
         } catch (t: Throwable) {
             Log.w("gtd", "alarm handling failed: ${t.message}", t)
         } finally {
@@ -128,6 +121,33 @@ class ReminderReceiver : BroadcastReceiver() {
             Log.w("gtd", "alarm page start blocked: ${t.message}")
         }
     }
+
+    /**
+     * `alarmFired` 的事件载荷：**这一站是谁** + 挂站那一刻定稿的草案。
+     *
+     * 应用被杀期间原生会按站点表连续投递多站，事件攒在队列里、下次启动才回放。
+     * 只给 taskId 的话 Dart 只能按"现在"重算该弹谁，几条叠在一起就会把
+     * `point_fired` 记到错的那件上。草案与站点键从 intent 里读回来
+     * （[putReminderExtras] 与 `AlarmStationStore` 已经写全），不另存一份。
+     */
+    private fun alarmFiredEvent(
+        intent: Intent,
+        reminder: Reminder,
+        delivered: Boolean,
+    ): Map<String, Any?> = mapOf(
+        "type" to "alarmFired",
+        ReminderExtras.TASK_ID to reminder.taskId,
+        "delivered" to delivered,
+        ReminderExtras.STATION_KEY to intent.getStringExtra(ReminderExtras.STATION_KEY),
+        ReminderExtras.AT_MILLIS to intent.getLongExtra(ReminderExtras.AT_MILLIS, -1L)
+            .takeIf { it >= 0 },
+        ReminderExtras.TITLE to reminder.title,
+        ReminderExtras.BODY to reminder.body,
+        ReminderExtras.CHANNEL to reminder.channel.name.lowercase(),
+        ReminderExtras.FULL_SCREEN to reminder.fullScreen,
+        ReminderExtras.ACTION_IDS to reminder.actions.map { it.id },
+        ReminderExtras.ACTION_LABELS to reminder.actions.map { it.label },
+    )
 
     private fun acquireWakeLock(context: Context): PowerManager.WakeLock? = try {
         val power = context.getSystemService(Context.POWER_SERVICE) as? PowerManager

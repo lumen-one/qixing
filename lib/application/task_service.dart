@@ -787,6 +787,53 @@ class TaskService {
     return [if (lead.isAfter(t.created)) lead, d];
   }
 
+  /// 这一站是不是这件任务的时点站（到点回放认人用）。
+  ///
+  /// 与 [_pointStations] 同一份站表，但**不看已响标记**：回放的事件常常正是刚响过
+  /// 的那一站，拿"还没响的站"去比一定对不上。推迟那一刻（`snoozedUntil`）也算一站。
+  /// 站点表是快照——应用不在期间改过期的那一站认不出来，调用方按软提醒处理
+  /// （不写标记、照草案补投，docs/sockets/reminder.md）。
+  bool isPointStation(String taskId, DateTime at) {
+    final t = byId(taskId);
+    if (t == null) return false;
+    if (!scheduleMode.isManual) return t.pointReminderAt == at;
+    final s = t.snoozedUntil;
+    if (s != null && s == at) return true;
+    return _manualStations(t).contains(at);
+  }
+
+  /// 按站点记账：把**这一站的原定时刻**写进 `point_fired`（到点回放用）。
+  ///
+  /// 与 [pollReminder] 里那次写入是同一个字段，区别只在认谁：回放的事件带着站点
+  /// 身份，不能拿"现在该响哪一站"去猜——几条事件叠在一起会记错人。
+  ///
+  /// 返回 true = 这一次真的推进了标记（调用方据此决定要不要补投）；false = 盘上已有
+  /// 同一站或更晚的标记（重复回放、乱序到达、前台 tick 先处理过），或任务已删 / 已完成。
+  Future<bool> markPointFired(String taskId, DateTime at) async {
+    final t = byId(taskId);
+    if (t == null || t.isCompleted) return false;
+    final prev = DateTime.tryParse(t.pointFiredMark ?? '');
+    if (prev != null && !at.isAfter(prev)) return false;
+    await _persist(
+      _withMeta(t, (m) => {...m, 'point_fired': at.toIso8601String()}),
+      EventOrigin.system,
+      DomainEventType.taskUpdated,
+    );
+    return true;
+  }
+
+  /// 软提醒那一站响过：作废它的锚点、算出下一站（到点回放用）。
+  ///
+  /// 只认"当前锚点真的是这一件"（[taskId] 对得上）且已到送达时刻；其余情形返回
+  /// false，交给前台 tick 或下一次重锚——站点表是快照，改期之后回放的那一站可能
+  /// 早就不在锚点里了。返回 true 时调用方负责补投那一站的草案。
+  Future<bool> advanceSoftReminder(String taskId) async {
+    final s = lastSchedule;
+    if (s == null || s.nextReminderAt == null) return false;
+    if ((s.nextReminderTaskId ?? s.nextTaskId) != taskId) return false;
+    return await _consumeSoftAnchor() != null;
+  }
+
   /// 有没有"snooze 已到期、但状态还挂着 snoozed"的任务（A4 的定时触点）。
   ///
   /// `_reload` 里写回 active，而 `_reload` 只由 `refreshSchedule` 调；
@@ -805,8 +852,8 @@ class TaskService {
   }
 
   /// 轮询是否正在进行（v1.26）。两个入口会打进来：`AppController` 的 20 秒
-  /// tick 与 `ReminderDispatcher` 的闹钟回调——它们不共享任何锁，同一个软提醒
-  /// 能被两边各发一次通知（点提醒有 `point_fired` 幂等标记，软提醒没有）。
+  /// tick 与不带站点身份的到点事件（桌面 Timer、升级前入队的）——它们不共享任何锁，
+  /// 同一个软提醒能被两边各发一次通知（点提醒有 `point_fired` 幂等标记，软提醒没有）。
   bool _polling = false;
 
   /// 由 UI/定时器周期调用：时点性提醒优先，其次 Slack 软提醒。
@@ -854,8 +901,22 @@ class TaskService {
       );
     }
 
+    final soft = await _consumeSoftAnchor();
+    if (soft == null) return null;
+    return ReminderEvent(
+      firedAt: current,
+      taskId: soft.taskId,
+      kind: ReminderKind.soft,
+      schedule: soft.schedule,
+    );
+  }
+
+  /// 软提醒锚点到点：作废锚点、读盘重锚。返回被作废的那份调度快照与它的任务；
+  /// null = 没有软提醒，或还没到送达时刻。到点回放那条链（[advanceSoftReminder]）
+  /// 与 [pollReminder] 共用同一份判据。
+  Future<({ScheduleResult schedule, String taskId})?> _consumeSoftAnchor() async {
     // A4：到期的 snooze 写回 active 并重锚，否则它既不在清单里、也不在"下一站"里，
-    // 没有任何东西会把它叫醒。放在时点提醒之后，理由见本方法开头。
+    // 没有任何东西会把它叫醒。放在时点提醒之后，理由见 [_pollReminder] 开头。
     if (hasExpiredSnooze) {
       await refreshSchedule(origin: EventOrigin.system);
     }
@@ -866,7 +927,7 @@ class TaskService {
     // 不顺延这里的话，20 秒 tick 会在静默段照原始锚点产出事件，而那条已经挂到
     // 明早的闹钟随后被重锚取消——用户设的静默段等于没生效。
     final deliveryAt = deliveryWindows.resolveDelivery(s.nextReminderAt!);
-    if (current.isBefore(deliveryAt)) return null;
+    if (now().isBefore(deliveryAt)) return null;
     final taskId = s.nextReminderTaskId ?? s.nextTaskId;
     if (taskId == null) return null;
     // 响过之后这件任务的锚点作废：重算要给出"下一轮"，不能沿用刚响的那个。
@@ -875,12 +936,7 @@ class TaskService {
     _anchors.remove(taskId);
     _anchorInputs.remove(taskId);
     await refreshSchedule(origin: EventOrigin.system);
-    return ReminderEvent(
-      firedAt: current,
-      taskId: taskId,
-      kind: ReminderKind.soft,
-      schedule: s,
-    );
+    return (schedule: s, taskId: taskId);
   }
 
   // ---------- 内部 ----------

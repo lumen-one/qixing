@@ -126,11 +126,35 @@ abstract class AlarmRingPort {
 /// 闹钟时留下的 [ReminderDraft] 自己投递（应用被杀也照弹），桌面没有这一层，
 /// 永远是 false。分发器据此决定还要不要自己 show——不判断就是同一条提醒弹
 /// 两遍：同 id 替换、重新响铃，通知的时刻被刷成"现在"，看起来像提醒迟到。
+///
+/// [at] / [stationKey] / [draft] 是**这一站的身份**：哪一格、原定几点、挂站那一刻
+/// 定稿的交付内容。应用被杀期间原生会按站点表连续投递多站，事件攒在队列里、下次
+/// 启动一次回放；只有 taskId 时 Dart 只能按"现在"重算该弹谁，几条叠在一起就会把
+/// `point_fired` 记到错的那件上（docs/sockets/reminder.md）。
 class FiredAlarm {
   final String taskId;
   final bool delivered;
 
-  const FiredAlarm(this.taskId, {this.delivered = false});
+  /// 站点表里这一格的原定时刻（原生 `ReminderExtras.AT_MILLIS`）；
+  /// null = 事件没带（桌面 Timer、升级前入队的事件）。
+  final DateTime? at;
+
+  /// 站点表主键 `<taskId>@<atMillis>`（原生 `ReminderExtras.STATION_KEY`）。
+  final String? stationKey;
+
+  /// 挂站那一刻定稿的交付草案（标题 / 正文 / 渠道 / 全屏 / 按钮）。
+  final ReminderDraft? draft;
+
+  const FiredAlarm(
+    this.taskId, {
+    this.delivered = false,
+    this.at,
+    this.stationKey,
+    this.draft,
+  });
+
+  /// 带站点身份 = 分发器能按这一站记账与补投；false 走 `pollReminder` 旧路径。
+  bool get hasStation => at != null && draft != null;
 }
 
 /// 系统闹钟插座（§4.3）。调用方一次下发整张站点表，适配器负责把它们保住：

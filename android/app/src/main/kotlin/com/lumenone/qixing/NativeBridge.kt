@@ -779,9 +779,25 @@ object NativeEventQueue {
         val keys = obj.keys()
         while (keys.hasNext()) {
             val key = keys.next()
-            val value = obj.opt(key)
-            map[key] = if (value == JSONObject.NULL) null else value
+            map[key] = jsonValue(obj.opt(key))
         }
         return map
+    }
+
+    /**
+     * 队列里的 JSON 值 → MethodChannel 认的类型。
+     *
+     * **数组必须拆成 ArrayList**：队列是"写 JSON、读回来"的一趟，`JSONObject` 会把
+     * List 存成 `JSONArray`，原样交给 StandardMessageCodec 会抛"不支持的类型"，
+     * 整批事件一次都取不回来（Dart 侧 `drainEvents` 把它当"没有事件"吞掉）。
+     * 站点草案里的按钮就是两个字符串数组。
+     */
+    private fun jsonValue(value: Any?): Any? = when (value) {
+        null, JSONObject.NULL -> null
+        is JSONArray -> ArrayList<Any?>(value.length()).apply {
+            for (i in 0 until value.length()) add(jsonValue(value.opt(i)))
+        }
+        is JSONObject -> jsonToMap(value)
+        else -> value
     }
 }
