@@ -321,11 +321,16 @@ void main() {
     // 树已经在，但整块在屏外：贴右 6 + 宽 240 → 面板左缘 794，文本再 +10。
     expect(find.text('今日清单'), findsOneWidget);
     expect(tester.getTopLeft(find.text('今日清单')).dx, greaterThan(800.0));
+    // 屏外还不够：progress=0 时面板只滑到"贴着屏边"，贴边那 6dp 连阴影还在屏内，
+    // 窗口又是留着不摘的——预热期间必须靠 opacity 0 把它整块盖住。
+    expect(_warmVeil(tester).opacity, 0);
 
     // 预热之后的第一帧进度就是跟手位置（不再从 0 起步、也不重建）。
     sendOverlayCall(const MethodCall('panelDrag', {'dx': 180.0}));
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('今日清单')).dx, closeTo(624, 1));
+    // 真拉开了就必须看得见（预热那层不能一直盖着）。
+    expect(_warmVeil(tester).opacity, 1);
   });
 
   testWidgets('panelCooldown：预热窗口到点摘掉，树卸掉（不调 collapse）', (tester) async {
@@ -539,6 +544,16 @@ void main() {
     }
   });
 }
+
+/// 预热那层遮盖：宿主里唯一包住 [FloatingPanel] 的 `Opacity`（§6.0）。
+Opacity _warmVeil(WidgetTester tester) => tester.widget<Opacity>(
+      find
+          .ancestor(
+            of: find.byType(FloatingPanel),
+            matching: find.byType(Opacity),
+          )
+          .first,
+    );
 
 /// 内存版 SettingsPort：测试里不碰磁盘（bootstrap 只用它读一次）。
 class _MemorySettingsPort implements SettingsPort {

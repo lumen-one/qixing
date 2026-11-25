@@ -365,21 +365,28 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
         backgroundColor: Colors.transparent,
         body: IgnorePointer(
           ignoring: _quickDrag,
-          child: AnimatedOpacity(
-            opacity: _quickDrag ? 0 : 1,
-            duration: const Duration(milliseconds: 160),
-            child: FloatingPanel(
-              controller: _c,
-              pageCtrl: _pageCtrl,
-              onCollapse: _collapse,
-              onOpenCalendar: () => showCalendarDialog(context, _c),
-              onOpenSettings: () => widget.bridge.openApp(target: 'settings'),
-              dockLeft: !_dockedRight,
-              anchorCenterY: _handleCenterY,
-              // 跟手拖动中 = 部分展开；其余 = 全展开。
-              progress: _dragProgress ?? 1,
-              onCollapsePull: _onPanelCollapsePull,
-              onCollapseRelease: _onPanelCollapseRelease,
+          // 预热态（§6.0）：树照建、布局照走，但**一个像素都不许露**。
+          // progress=0 时面板只滑到"贴着屏边"（`right: 6 - 宽` 里的 6 是展开态的
+          // 贴边空隙），面板左缘落在屏内 6dp，加一层朝左 18dp 的阴影；原来那一帧
+          // 紧跟着 removeView，看不见；现在窗口留着，它就成了一条"收起来了还在"的边。
+          child: Opacity(
+            opacity: _warm ? 0 : 1,
+            child: AnimatedOpacity(
+              opacity: _quickDrag ? 0 : 1,
+              duration: const Duration(milliseconds: 160),
+              child: FloatingPanel(
+                controller: _c,
+                pageCtrl: _pageCtrl,
+                onCollapse: _collapse,
+                onOpenCalendar: () => showCalendarDialog(context, _c),
+                onOpenSettings: () => widget.bridge.openApp(target: 'settings'),
+                dockLeft: !_dockedRight,
+                anchorCenterY: _handleCenterY,
+                // 跟手拖动中 = 部分展开；其余 = 全展开。
+                progress: _dragProgress ?? 1,
+                onCollapsePull: _onPanelCollapsePull,
+                onCollapseRelease: _onPanelCollapseRelease,
+              ),
             ),
           ),
         ),

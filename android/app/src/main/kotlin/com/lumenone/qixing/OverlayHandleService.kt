@@ -468,9 +468,17 @@ class OverlayHandleService : Service() {
     /** 松手判快甩用的速度跟踪（一次手势一个：DOWN obtain、UP 回收）。 */
     private var velocityTracker: VelocityTracker? = null
 
-    /** 滑回后 Dart 没来摘窗口的兜底（引擎挂了等）。 */
+    /**
+     * 滑回后 Dart 没来摘窗口的兜底（引擎挂了等）。
+     *
+     * 只认"展开着却没人收"这一种：预热窗口也挂在 [panelView] 上（§6.0），它不是
+     * 漏收，到点由 [panelWarmCooldown] 摘——这里要是不看 [panelWarm]，滑回后的
+     * 400ms 就会把刚预热好的窗口摘掉，预热白做。
+     */
     private val pullCloseFallback = Runnable {
-        if (!panelExpanded && panelView != null) collapsePanel(notifyDart = false)
+        if (!panelExpanded && !panelWarm && panelView != null) {
+            collapsePanel(notifyDart = false)
+        }
     }
 
     /** 按下后的预热：post 一下，让已经排队的 MOVE 先走（§6.0）。 */
