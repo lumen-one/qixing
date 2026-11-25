@@ -294,6 +294,106 @@ void main() {
     expect(tester.getTopLeft(find.text('今日清单')).dx, closeTo(564, 1));
   });
 
+  testWidgets('panelWarmup：按下就把树建在 progress=0（屏外），真拉开直接接上',
+      (tester) async {
+    // 原生在 ACTION_DOWN 挂好窗口（屏外、不接触摸），让这里把首帧构建提前付掉；
+    // 拖过 slop 那一刻只剩 setState。这条防的是"久未使用后第一次拉开不跟手"。
+    final controller = makeController();
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(size: Size(800, 600)),
+      child: MaterialApp(
+        home:
+            OverlayPanelShell(controller: controller, bridge: OverlayBridge()),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    sendOverlayCall(const MethodCall('state', {
+      'expanded': false,
+      'dockedRight': true,
+    }));
+    await tester.pumpAndSettle();
+    expect(find.text('今日清单'), findsNothing);
+
+    sendOverlayCall(const MethodCall('panelWarmup'));
+    await tester.pumpAndSettle();
+
+    // 树已经在，但整块在屏外：贴右 6 + 宽 240 → 面板左缘 794，文本再 +10。
+    expect(find.text('今日清单'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('今日清单')).dx, greaterThan(800.0));
+
+    // 预热之后的第一帧进度就是跟手位置（不再从 0 起步、也不重建）。
+    sendOverlayCall(const MethodCall('panelDrag', {'dx': 180.0}));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('今日清单')).dx, closeTo(624, 1));
+  });
+
+  testWidgets('panelCooldown：预热窗口到点摘掉，树卸掉（不调 collapse）', (tester) async {
+    final controller = makeController();
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(size: Size(800, 600)),
+      child: MaterialApp(
+        home:
+            OverlayPanelShell(controller: controller, bridge: OverlayBridge()),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    sendOverlayCall(const MethodCall('state', {
+      'expanded': false,
+      'dockedRight': true,
+    }));
+    sendOverlayCall(const MethodCall('panelWarmup'));
+    await tester.pumpAndSettle();
+    expect(find.text('今日清单'), findsOneWidget);
+
+    calls.clear();
+    sendOverlayCall(const MethodCall('panelCooldown'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('今日清单'), findsNothing);
+    // 摘窗口是原生的决定，宿主不再回调 collapse（否则会多一轮状态广播）。
+    expect(calls.map((c) => c.method), isNot(contains('collapse')));
+  });
+
+  testWidgets('收起后原生把窗口留在预热态：树不被卸掉，下一次拉开直接接上',
+      (tester) async {
+    // 原生 collapse 的真实顺序是：广播收起 → 发 panelWarmup → 最后才回 result。
+    // 宿主不能在 await collapse() 回来之后又把树清掉（那样预热就白做了）。
+    final controller = makeController();
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(size: Size(800, 600)),
+      child: MaterialApp(
+        home:
+            OverlayPanelShell(controller: controller, bridge: OverlayBridge()),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(OverlayBridge.channel, (call) async {
+      calls.add(call);
+      if (call.method == 'collapse') {
+        sendOverlayCall(const MethodCall('state', {
+          'expanded': false,
+          'dockedRight': true,
+        }));
+        sendOverlayCall(const MethodCall('panelWarmup'));
+      }
+      return true;
+    });
+
+    sendOverlayCall(const MethodCall('panelDrag', {'dx': 180.0}));
+    await tester.pumpAndSettle();
+    sendOverlayCall(const MethodCall('panelDragEnd', {'open': false}));
+    await tester.pumpAndSettle();
+
+    expect(calls.map((c) => c.method), contains('collapse'));
+    // 树还在、仍在屏外（progress=0）：下一次拉开只是 setState。
+    expect(find.text('今日清单'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('今日清单')).dx, greaterThan(800.0));
+  });
+
   testWidgets('panelDragEnd{open=false}：滑回屏外后才收起（调 collapse 摘窗口）',
       (tester) async {
     final controller = makeController();

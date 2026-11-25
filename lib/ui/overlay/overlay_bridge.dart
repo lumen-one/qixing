@@ -44,6 +44,12 @@ class OverlayBridge {
       // 快记（§6.8）：进方块态 / 回拖取消。
       if (call.method == 'quickNoteStart') _drags.add(const QuickNoteStart());
       if (call.method == 'quickNoteCancel') _drags.add(const QuickNoteCancel());
+      // 冷启动预热（§6.0）：原生已把面板窗口挂上（屏外、不接触摸），
+      // 这里在 progress=0 下把树建好；真拉开时只剩 setState。
+      if (call.method == 'panelWarmup') _drags.add(const PanelWarmup());
+      // 预热窗口到点被摘：树可以卸了，下次按下再建。
+      if (call.method == 'panelCooldown') _drags.add(const PanelCooldown());
+
       // 松手：落点（逻辑像素）交给 Dart，方块由这里接管飞向屏幕中央。
       if (call.method == 'quickNoteOpen' && call.arguments is Map) {
         final m = Map<String, Object?>.from(call.arguments as Map);
@@ -135,6 +141,17 @@ class QuickNoteOpen extends OverlayDragEvent {
   final Offset position;
 
   const QuickNoteOpen(this.position);
+}
+
+/// 预热：原生已把面板窗口挂好（屏外、不接触摸、不抢焦点），让宿主在 progress=0
+/// 下把面板树建起来（ui-interaction.md §6.0）。真拉开时不再付首帧构建的代价。
+class PanelWarmup extends OverlayDragEvent {
+  const PanelWarmup();
+}
+
+/// 预热结束：原生要摘窗口了，面板树可以卸掉（下次按下再建）。
+class PanelCooldown extends OverlayDragEvent {
+  const PanelCooldown();
 }
 
 /// 悬浮面板里点『编辑规则』时：把用户带进应用的设置页并定位该规则

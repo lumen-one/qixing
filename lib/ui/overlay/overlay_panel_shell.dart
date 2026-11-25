@@ -56,6 +56,12 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
   /// 只活在本次展开里——补满后交回 [_expanded]，滑回后置 null。
   double? _dragProgress;
 
+  /// 原生是否把面板窗口留在**预热**态（§6.0）。
+  ///
+  /// 它决定收起之后还要不要留着这棵树：真拉开（progress 来了）就作废，
+  /// 原生摘窗口（`panelCooldown`）才回到"没挂"。
+  bool _warm = false;
+
   /// 松手后的补满/滑回动画（剩余越多动得越久，都在 60–220ms 一档）。
   late final AnimationController _settleCtrl;
   bool _settleOpen = false;
@@ -91,6 +97,12 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
       // 编排也在这一拍先立起来（§6.11）：等帧后再亮的话，面板的第一帧是今日
       // 清单，随后才被覆盖页盖住——那一下正是"滑出来先看见清单"。
       if (s.expanded && !wasExpanded) {
+        // 不经拖动直接展开（原生的 `expand`）：预热留下的 progress=0 不能留着，
+        // 否则面板停在屏外。拖动那一路此刻正跑补满动画，跳过（它自己会收拾）。
+        _warm = false;
+        if (_dragProgress != null && !_settleCtrl.isAnimating) {
+          setState(() => _dragProgress = null);
+        }
         _c.landOnPlanForToday();
         _landOnDefaultPage();
       }
@@ -179,9 +191,27 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
         // 不能先让人看见清单。
         _c.landOnPlanForToday();
       }
+      // 真拉开了：预热到此为止（原生那边同时会把 flag 放开）。
+      _warm = false;
       setState(() => _dragProgress = _progressFor(e.dx));
     } else if (e is PanelDragEnd) {
       _settle(e.open);
+    } else if (e is PanelWarmup) {
+      // 原生在按下把手时就把窗口挂上了（屏外、不接触摸，§6.0）：这里把树建起来，
+      // 真拉开时只是现有树上的 setState。准备动作与第一次 progress 完全一致
+      // （起手页 + 编排），否则预热出来的树和拖出来的不是同一棵。
+      if (_quickDrag || _quickOrigin != null) return;
+      if (_dragProgress != null) return; // 已经在跟手/补满：这一拍不是预热
+      _warm = true;
+      _syncLandingPage();
+      _c.landOnPlanForToday();
+      setState(() => _dragProgress = 0);
+    } else if (e is PanelCooldown) {
+      // 原生摘窗口：树卸掉，下次按下重新预热。补满/滑回的动画里不动它。
+      _warm = false;
+      if (_quickDrag || _quickOrigin != null) return;
+      if (_settleCtrl.isAnimating) return;
+      setState(() => _dragProgress = null);
     } else if (e is QuickNoteStart) {
       // 面板不摘窗口，只淡出：回拖取消时能原地恢复跟手（§6.8）。
       setState(() => _quickDrag = true);
@@ -261,7 +291,9 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
     // 免得下一次拉出来还挂着一块上次没看成的东西。
     widget.controller.closePlan();
     await widget.bridge.collapse();
-    if (mounted) setState(() => _dragProgress = null);
+    // 原生可能把窗口留在预热态（它已经让 Dart 在 progress=0 建好树了）：
+    // 那一拍别再把它卸掉，否则下一次拉开又要重建。
+    if (mounted && !_warm) setState(() => _dragProgress = null);
   }
 
   void _maybeOnboard() {

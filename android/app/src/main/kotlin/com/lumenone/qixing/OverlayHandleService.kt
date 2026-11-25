@@ -209,6 +209,26 @@ class OverlayHandleService : Service() {
         /** 滑回后等 Dart 来摘面板窗口的上限（ms）；超时就自己收，防窗口常驻。 */
         private const val PULL_CLOSE_FALLBACK_MS = 400L
 
+        /**
+         * 预热窗口挂多久再摘（§6.0）。
+         *
+         * 点一下没拖、或者滑回之后，窗口先留着——5 秒内再拉一次不必重建 surface
+         * 与首帧；过了这个点才真的摘（透明一层一直挂着没有意义）。
+         */
+        private const val PANEL_WARM_LINGER_MS = 5_000L
+
+        /** 服务起来多久后预热第二个引擎（§6.0）：别抢 [addHandle] 那一下。 */
+        private const val ENGINE_WARM_DELAY_MS = 2_000L
+
+        /**
+         * 预热窗口额外带的 FLAG（§6.0）：**不接触摸、不抢焦点**。
+         *
+         * 它是 MATCH_PARENT 的全屏窗口，面板还没展开时放开这两条就等于把整个屏幕
+         * 盖住——底下任何 App 都点不动。
+         */
+        private val WARM_FLAGS = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+
         /** notifyReady 后等待 Dart 来取初始状态的上限。 */
         private const val READY_ACK_TIMEOUT_MS = 3_000L
 
@@ -400,7 +420,16 @@ class OverlayHandleService : Service() {
     /** 面板是否展开（展开时把手隐藏，二次展开不重复挂窗口）。 */
     private var panelExpanded = false
 
+    /**
+     * 预热态（§6.0）：窗口已挂上，但带 [WARM_FLAGS]（不接触摸、不抢焦点），
+     * Dart 在 progress=0（面板整块在屏外）把树建好了等着拉开。
+     */
+    private var panelWarm = false
+
     // ------------------------------------------------------- 跟手拉开（§6.0）
+
+    /** 手指是否还按在把手上：预热只在按住期间做（松手后不再新建窗口）。 */
+    private var touching = false
 
     /** "拉开"手势进行中：朝屏内横拖把手，侧边栏跟手滑出。 */
     private var pulling = false
@@ -442,6 +471,19 @@ class OverlayHandleService : Service() {
     /** 滑回后 Dart 没来摘窗口的兜底（引擎挂了等）。 */
     private val pullCloseFallback = Runnable {
         if (!panelExpanded && panelView != null) collapsePanel(notifyDart = false)
+    }
+
+    /** 按下后的预热：post 一下，让已经排队的 MOVE 先走（§6.0）。 */
+    private val warmRunnable = Runnable { warmPanel() }
+
+    /** 预热窗口到点摘掉（见 [PANEL_WARM_LINGER_MS]）。 */
+    private val panelWarmCooldown = Runnable {
+        if (!panelExpanded && panelWarm) cooldownPanel()
+    }
+
+    /** 服务起来后预热第二个引擎（见 [ENGINE_WARM_DELAY_MS]）。 */
+    private val engineWarmup = Runnable {
+        if (overlayEngine == null && !hostForeground) ensureOverlayEngine()
     }
 
     private var density = 1f
@@ -509,6 +551,13 @@ class OverlayHandleService : Service() {
             ACTION_HOST_BACKGROUND -> setHostForeground(false)
         }
         addHandle()
+        // 服务起来就把第二个引擎预热上（§6.0）：只在"退到后台"才热的话，开机 /
+        // 被系统重建后的第一次拉开得先建引擎、等 isolate 把整个核心装配完，那一段
+        // 比窗口冷更贵（表现为"拖的时候面板不出来、松手才开"）。
+        if (overlayEngine == null && !hostForeground) {
+            mainHandler.removeCallbacks(engineWarmup)
+            mainHandler.postDelayed(engineWarmup, ENGINE_WARM_DELAY_MS)
+        }
         return START_STICKY
     }
 
@@ -542,6 +591,9 @@ class OverlayHandleService : Service() {
     }
 
     override fun onDestroy() {
+        // 这个 handler 上挂的都是本服务自己的活（长按、滑回兜底、预热闹钟、
+        // 状态补发）：服务没了就一起撤掉，别让预热在死掉的服务上建引擎。
+        mainHandler.removeCallbacksAndMessages(null)
         removePanel()
         destroyOverlayEngine()
         removeHandle()
@@ -671,8 +723,12 @@ class OverlayHandleService : Service() {
         }
         hostForeground = foreground
         // 进前台要收起面板；快记（方块态或输入条）同样不能留着——用户已经进应用了。
-        if (foreground && (panelExpanded || quickNote || quickNoteShowing)) {
-            collapsePanel(notifyDart = true)
+        if (foreground) {
+            if (panelExpanded || quickNote || quickNoteShowing) {
+                collapsePanel(notifyDart = true)
+            }
+            // 预热窗口也不能留着：它虽然碰不着，毕竟全屏压在应用上面（§6.0）。
+            cooldownPanel()
         }
         applyVisibility()
         if (!foreground) {
@@ -833,12 +889,19 @@ class OverlayHandleService : Service() {
                         pastSplit = false
                         pastSplitPanel = false
                         splitDy = 0f
+                        touching = true
                         // event.x/y 是**视图自身坐标系**：白条在热区里的位置按它算。
                         downOnBar = isOnBar(v, event.x, event.y)
                         velocityTracker?.recycle()
                         velocityTracker = VelocityTracker.obtain()
                         // 长按（换边）的靶是白条：热区里随手摁一下不该换边。
                         if (downOnBar) mainHandler.postDelayed(longPressRunnable, 500L)
+                        // 冷启动预热（§6.0）：按下到过 slop 之间还有几十毫秒，正好把
+                        // "挂面板窗口 + 面板首帧构建"这两件重活摊掉——它们压在第一次
+                        // MOVE 里，就是"第一下不跟手"的来源。post 而不是就地做：让
+                        // 已经排队的 MOVE 先走完。
+                        mainHandler.removeCallbacks(warmRunnable)
+                        mainHandler.post(warmRunnable)
                         return true
                     }
 
@@ -851,10 +914,14 @@ class OverlayHandleService : Service() {
                         }
                         // 朝屏内的横拖 = "拉开"（跟手滑出）；竖拖仍然是移把手。
                         if (dragging && !pulling && isOpenGesture(dx, dy, slop)) {
+                            // 先把这一次位移提交给窗口，再走 startPull 那段同步重活
+                            // （挂窗口 / 切 flag）：反过来的顺序下，冷启动时这一次
+                            // MOVE 要等重活做完才生效——“手指走了、条没走”就是这么来的。
+                            applyPullOffset(v, params, wm, inwardDx(dx))
                             startPull()
                         }
                         if (pulling) {
-                            val inward = if (dockedRight) -dx else dx
+                            val inward = inwardDx(dx)
                             if (quickNote) {
                                 // 方块跟指尖（二维）：进入时已经在窗口上设好尺寸。
                                 moveQuickBox(wm, event.rawX, event.rawY)
@@ -894,17 +961,7 @@ class OverlayHandleService : Service() {
                             }
                             // 把手跟着手指横移（y 冻结：拉开是横手势，面板的
                             // 垂直锚点不跟着晃）。
-                            val cap = if (pastSplitPanel) {
-                                max(pullSplitPx(wm).toFloat(), panelWidthPx(wm).toFloat())
-                            } else {
-                                pullSplitPx(wm).toFloat()
-                            }
-                            pullDx = inward.coerceIn(0f, cap)
-                            if (wm != null) {
-                                params.x = edgeX(wm) +
-                                    (if (dockedRight) -pullDx else pullDx).toInt()
-                            }
-                            updateView(v, params)
+                            applyPullOffset(v, params, wm, inward)
                             if (pullTracking) sendPullProgress()
                             return true
                         }
@@ -920,6 +977,9 @@ class OverlayHandleService : Service() {
 
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         mainHandler.removeCallbacks(longPressRunnable)
+                        // 松手之后不再预热：已经 post 的那次留着也无害，它自己会
+                        // 看到 touching=false 直接退出（§6.0）。
+                        touching = false
                         val dx = event.rawX - downX
                         if (quickNote) {
                             // 松手 = 确认记一条：把落点交给 Dart（方块由它接管、飞向
@@ -983,10 +1043,41 @@ class OverlayHandleService : Service() {
         pulling = true
         if (!overlayReady) return
         if (!ensureOverlayEngine()) return
+        // 预热过的话（§6.0），这一步只是把两个 flag 切掉、重新求一次焦点。
         if (!addPanelView()) return
+        panelWarm = false
+        mainHandler.removeCallbacks(panelWarmCooldown)
         pullTracking = true
         sendPullProgress()
     }
+
+    /**
+     * 把"朝屏内的拖动量"落到把手窗口上（§6.0）。
+     *
+     * 单拎出来是为了能在 [startPull] 之前先调一次：位移先进 WM 事务，之后那段
+     * 同步的挂窗口才不会连带把这一帧也拖住。
+     */
+    private fun applyPullOffset(
+        v: View,
+        params: WindowManager.LayoutParams,
+        wm: WindowManager?,
+        inward: Float,
+    ) {
+        // 过了分岔点且判为"想要面板"时，上限放宽到面板宽（§6.8）。
+        val cap = if (pastSplitPanel) {
+            max(pullSplitPx(wm).toFloat(), panelWidthPx(wm).toFloat())
+        } else {
+            pullSplitPx(wm).toFloat()
+        }
+        pullDx = inward.coerceIn(0f, cap)
+        if (wm != null) {
+            params.x = edgeX(wm) + (if (dockedRight) -pullDx else pullDx).toInt()
+        }
+        updateView(v, params)
+    }
+
+    /** 朝屏内的方向：贴右时是负 dx，贴左时是正 dx。 */
+    private fun inwardDx(dx: Float): Float = if (dockedRight) -dx else dx
 
     /**
      * 松手：补满全开（[open]）或滑回屏外。
@@ -1028,6 +1119,98 @@ class OverlayHandleService : Service() {
             overlayChannel?.invokeMethod("panelDragEnd", mapOf("open" to open))
         } catch (t: Throwable) {
             Log.w(TAG, "panelDragEnd delivery failed: ${t.message}")
+        }
+    }
+
+    // ------------------------------------------------ 冷启动预热（§6.0）
+
+    /**
+     * 按下把手时的预热：把面板窗口先挂上、让 Dart 在屏外画好一帧。
+     *
+     * 拉开这一路最重的两件事是"挂全屏 `FlutterView`（新建 surface）"与"面板首帧
+     * 构建"（收起时整棵树是卸载的），冷的时候几十到几百 ms。它们压在第一次
+     * `ACTION_MOVE` 里时，这一次位移会跟着一起晚到——手指走了、条没走、然后跳过去。
+     * 按下到过 slop 之间正好有几十毫秒，够把它们摊掉。
+     *
+     * 引擎没热（`overlayReady == false`）时什么都不做：这条路上建引擎要在主线程
+     * 阻塞等 isolate（最长 2 × [ENTRYPOINT_PROBE_TIMEOUT_MS]），比"慢一下"更糟；
+     * 那一档由服务起来后的 [engineWarmup] 兜。
+     */
+    private fun warmPanel() {
+        if (!touching || panelExpanded || panelWarm || panelView != null) return
+        if (hostForeground || quickNote || quickNoteShowing) return
+        if (!overlayReady) return
+        if (!addPanelView(warm = true)) return
+        markPanelWarm()
+        startPanelWarmDart()
+        Log.i(TAG, "overlay panel warm-up")
+    }
+
+    /**
+     * 展开 → 预热态（§6.0）：窗口留着，切到"不接触摸、不抢焦点"。
+     *
+     * 只动窗口，不发通道消息——`panelWarmup` 必须排在 `state{expanded=false}`
+     * 之后（见 [startPanelWarmDart]）。
+     */
+    private fun markPanelWarm() {
+        val view = panelView ?: return
+        val params = panelParams ?: return
+        panelWarm = true
+        if (params.flags and WARM_FLAGS == WARM_FLAGS) return
+        params.flags = params.flags or WARM_FLAGS
+        try {
+            windowManager?.updateViewLayout(view, params)
+        } catch (t: Throwable) {
+            Log.w(TAG, "panel updateViewLayout failed: ${t.message}")
+        }
+    }
+
+    /**
+     * 让 Dart 在 progress=0（面板整块在屏外）把树建起来，并给这一轮预热上闹钟。
+     *
+     * 必须排在状态广播之后：宿主要先知道"已经收起了"，才会把 progress=0 当成
+     * 预热，而不是把它当成展开中的一帧。
+     */
+    private fun startPanelWarmDart() {
+        sendPanelWarmup()
+        schedulePanelCooldown()
+    }
+
+    /** 预热窗口到点（或宿主进前台）就摘：透明一层一直挂着没有意义。 */
+    private fun cooldownPanel() {
+        mainHandler.removeCallbacks(panelWarmCooldown)
+        if (panelExpanded) return
+        if (panelView == null) {
+            panelWarm = false
+            return
+        }
+        val wasWarm = panelWarm
+        panelWarm = false
+        removePanel()
+        if (wasWarm) sendPanelCooldown()
+        Log.i(TAG, "overlay panel warm window released")
+    }
+
+    private fun schedulePanelCooldown() {
+        mainHandler.removeCallbacks(panelWarmCooldown)
+        mainHandler.postDelayed(panelWarmCooldown, PANEL_WARM_LINGER_MS)
+    }
+
+    /** 预热 → Dart：在 progress=0（面板整块在屏外）把树建起来。 */
+    private fun sendPanelWarmup() {
+        try {
+            overlayChannel?.invokeMethod("panelWarmup", null)
+        } catch (t: Throwable) {
+            Log.w(TAG, "panelWarmup delivery failed: ${t.message}")
+        }
+    }
+
+    /** 预热结束 → Dart：树可以卸了，下次按下再建。 */
+    private fun sendPanelCooldown() {
+        try {
+            overlayChannel?.invokeMethod("panelCooldown", null)
+        } catch (t: Throwable) {
+            Log.w(TAG, "panelCooldown delivery failed: ${t.message}")
         }
     }
 
@@ -1266,6 +1449,9 @@ class OverlayHandleService : Service() {
             return
         }
         panelExpanded = true
+        // 预热态到此结束：窗口已经交给展开态（[addPanelView] 顺手放开了 flag）。
+        panelWarm = false
+        mainHandler.removeCallbacks(panelWarmCooldown)
         applyVisibility()
         notifyOverlayState()
         Log.i(TAG, "overlay panel expanded")
@@ -1287,9 +1473,19 @@ class OverlayHandleService : Service() {
         // 输入条收起：把手重新出现（快记态若还挂着也不能留方块）。
         quickNoteShowing = false
         quickNote = false
-        removePanel()
+        // 不就地摘窗口，退回预热态（§6.0）：窗口留着、切到 [WARM_FLAGS]，Dart
+        // 回 progress=0；下一次拉开不再重建 surface 与树。宿主在前台时不能留
+        // （它会压在应用上面），Dart 没回应（兜底路径）时也不能留——那一拍
+        // 宿主仍以为面板开着，再让它画一帧就又出来了。
+        val keepWarm = notifyDart && !hostForeground
+        if (keepWarm) {
+            markPanelWarm()
+        } else {
+            cooldownPanel()
+        }
         applyVisibility()
         if (notifyDart) notifyOverlayState()
+        if (keepWarm) startPanelWarmDart()
         Log.i(TAG, "overlay panel collapsed")
     }
 
@@ -1419,8 +1615,12 @@ class OverlayHandleService : Service() {
      *
      * @return true = 已成功挂上。
      */
-    private fun addPanelView(): Boolean {
-        if (panelView != null) return true
+    private fun addPanelView(warm: Boolean = false): Boolean {
+        if (panelView != null) {
+            // 预热窗口已经挂着：真拉开时把触摸/焦点放回来就行（§6.0）。
+            if (!warm) releaseWarmFlags()
+            return true
+        }
         val engine = overlayEngine ?: return false
         val wm = windowManager ?: (getSystemService(Context.WINDOW_SERVICE) as? WindowManager) ?: return false
         windowManager = wm
@@ -1439,12 +1639,16 @@ class OverlayHandleService : Service() {
             view.attachToFlutterEngine(engine)
             // 视图与窗口都必须透明：面板下面是别的 App，要能看见（遮罩由 Dart 画）。
             view.setBackgroundColor(0x00000000)
-            val params = panelParams ?: buildPanelParams()
+            val params = panelParams ?: buildPanelParams().apply {
+                // 预热窗口：屏外没内容、碰不着、也不抢焦点（§6.0）。
+                if (warm) flags = flags or WARM_FLAGS
+            }
             wm.addView(view, params)
             panelView = view
             panelParams = params
             // 面板里要能输入文字/弹时间选择器：窗口可聚焦，并主动请求焦点。
-            view.requestFocus()
+            // 预热窗口反过来——不能抢底下 App 的焦点。
+            if (!warm) view.requestFocus()
             Log.i(TAG, "overlay panel view attached")
             true
         } catch (t: Throwable) {
@@ -1459,6 +1663,24 @@ class OverlayHandleService : Service() {
     }
 
     /**
+     * 预热 → 真拉开：把窗口恢复成"能接触摸、能拿焦点"（§6.0）。
+     *
+     * 只有这一次 relayout 落在手势路径上（几毫秒），surface 与树都是现成的。
+     */
+    private fun releaseWarmFlags() {
+        val view = panelView ?: return
+        val params = panelParams ?: return
+        if (params.flags and WARM_FLAGS == 0) return
+        params.flags = params.flags and WARM_FLAGS.inv()
+        try {
+            windowManager?.updateViewLayout(view, params)
+        } catch (t: Throwable) {
+            Log.w(TAG, "panel updateViewLayout failed: ${t.message}")
+        }
+        view.requestFocus()
+    }
+
+    /**
      * 面板视图的构造点。
      *
      * 目前用 FlutterSurfaceView(transparent=true)。若某些 ROM 上渲染成黑底，
@@ -1469,6 +1691,7 @@ class OverlayHandleService : Service() {
         FlutterView(this, FlutterSurfaceView(this, true))
 
     private fun removePanel() {
+        panelWarm = false
         val view = panelView
         panelView = null
         panelParams = null
