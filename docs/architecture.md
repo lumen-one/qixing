@@ -607,6 +607,12 @@ DOWN…UP 要么整个归把手、要么整个归底下的 App，没有"识别�
 把手视图在 attach 之后对自己调 `setSystemGestureExclusionRects`（声明的是热区整块），
 把自己从系统返回手势的边缘带里
 抠出来（这是 `OverlayHandleService` 的职责，属平台呈现，不进 UI 层）。
+**拉开之前先预热**：挂全屏 `FlutterView` 与面板首帧构建是这条路上最重的两件事（收起时整棵树
+是卸载的），压在第一次 `ACTION_MOVE` 里会把当次位移一起拖住。所以在 `ACTION_DOWN` 就把窗口
+挂上（先带 `FLAG_NOT_TOUCHABLE | FLAG_NOT_FOCUSABLE`，Dart 在 progress=0 下把树建好），真
+拉开只剩切 flag；窗口在收起后留 5 秒才摘，宿主进前台立刻摘。第二个引擎也在服务起来 2 秒后
+预热，别等"退到后台"——开机 / 被系统重建后的第一次拉开不该先付引擎冷启动。通道因此多两条
+单向下行事件（`panelWarmup` / `panelCooldown`），跟手与状态那几条不变。
 **把手的竖向位置可上锁**（设置项 `handle_locked`）：上锁后拖拽不再改变 y，长按换边
 仍可用；锁定意图存在 `settings.json`，执行在原生（把手位置本身是原生 prefs）。
 **面板窗口刻意不声明排除区**——那里从边缘起的横向返回恰好等于收起面板。
