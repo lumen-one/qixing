@@ -533,7 +533,7 @@ class MarkdownTaskRepository implements TaskRepository { /* … */ }
 ### 4.3 送达策略与提醒协调者
 
 `NotificationWindowRule`（什么时候真正打扰用户）与 `ReminderDispatcher`（站点表
-怎么协调三个提醒源）：见 [sockets/reminder.md](sockets/reminder.md)。
+怎么协调四个提醒源）：见 [sockets/reminder.md](sockets/reminder.md)。
 
 ### 4.4 同步类插座（application 定义）
 

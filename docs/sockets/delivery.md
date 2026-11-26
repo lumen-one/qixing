@@ -46,7 +46,7 @@ abstract class AlarmRingPort {
   String? get ringingTaskId;      // 正在响的那一件；null = 没在响
 }
 
-/// 一个待触发的站点。静态站点（时点提醒、编排）重锚时一次排全交给原生存盘，
+/// 一个待触发的站点。静态站点（时点提醒、编排、每日收尾）重锚时一次排全交给原生存盘，
 /// 到点由原生自己投递，不依赖 Dart 进程还在。
 class AlarmStation {
   final DateTime at;

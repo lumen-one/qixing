@@ -76,6 +76,7 @@
 | [2026-11-08-record-book-independent.md](2026-11-08-record-book-independent.md) | 记录与主线分家：各住一个文件，记录页没有只读态 |
 | [2026-11-09-log-date-repick.md](2026-11-09-log-date-repick.md) | 改记录日期回日历重圈一次，保存撞车不关框 |
 | [2026-11-12-task-alarm-switch.md](2026-11-12-task-alarm-switch.md) | 闹钟是每件任务自己的开关，普通提醒一律有声 |
+| [2026-11-26-daily-digest-reminder.md](2026-11-26-daily-digest-reminder.md) | 每日收尾提醒：走站点表、只排下一次、件数只算今日页编号条目 |
 
 待补（都是"会被重新质疑"的取舍，按需要慢慢写）：
 
