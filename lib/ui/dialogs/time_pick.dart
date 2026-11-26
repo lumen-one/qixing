@@ -37,6 +37,13 @@ class _TimePickerSheetState extends State<_TimePickerSheet> {
   static const double _itemExtent = 32;
   static const double _viewportHeight = _itemExtent * 5;
 
+  /// 三列各自的宽度。不用 Expanded 均分：均分会让「6」「00」「下午」散在
+  /// 屏幕两端，读不出是同一个时刻。数字列收到刚好放两位数的宽度，冒号居中。
+  static const double _hourWidth = 52;
+  static const double _minuteWidth = 52;
+  static const double _periodWidth = 64;
+  static const double _colonWidth = 10;
+
   bool _inited = false;
   bool _use24 = true;
 
@@ -91,6 +98,12 @@ class _TimePickerSheetState extends State<_TimePickerSheet> {
 
   String _minuteLabel(int i) => _minutes[i].toString().padLeft(2, '0');
 
+  double get _wheelsWidth =>
+      _hourWidth +
+      _colonWidth +
+      _minuteWidth +
+      (_use24 ? 0 : _periodWidth);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -104,56 +117,72 @@ class _TimePickerSheetState extends State<_TimePickerSheet> {
             const SizedBox(height: 10),
             SizedBox(
               height: _viewportHeight,
-              child: Stack(
-                children: [
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    top: (_viewportHeight - _itemExtent) / 2,
-                    height: _itemExtent,
-                    child: IgnorePointer(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.surfaceContainerHighest
-                              .withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Row(
+              child: Center(
+                child: SizedBox(
+                  width: _wheelsWidth,
+                  child: Stack(
                     children: [
-                      Expanded(
-                        flex: 2,
-                        child: _wheel(
-                          count: _use24 ? 24 : 12,
-                          controller: _hourCtrl,
-                          label: _hourLabel,
-                          onChanged: (i) => setState(() => _hourIndex = i),
-                        ),
-                      ),
-                      Expanded(
-                        flex: 2,
-                        child: _wheel(
-                          count: _minutes.length,
-                          controller: _minuteCtrl,
-                          label: _minuteLabel,
-                          onChanged: (i) => setState(() => _minuteIndex = i),
-                        ),
-                      ),
-                      if (!_use24)
-                        Expanded(
-                          flex: 3,
-                          child: _wheel(
-                            count: 2,
-                            controller: _periodCtrl,
-                            label: (i) => i == 0 ? '上午' : '下午',
-                            onChanged: (i) => setState(() => _pm = i == 1),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        top: (_viewportHeight - _itemExtent) / 2,
+                        height: _itemExtent,
+                        child: IgnorePointer(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surfaceContainerHighest
+                                  .withValues(alpha: 0.6),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                           ),
                         ),
+                      ),
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: _hourWidth,
+                            child: _wheel(
+                              count: _use24 ? 24 : 12,
+                              controller: _hourCtrl,
+                              label: _hourLabel,
+                              onChanged: (i) => setState(() => _hourIndex = i),
+                            ),
+                          ),
+                          SizedBox(
+                            width: _colonWidth,
+                            child: Text(
+                              ':',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontSize: 19,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          SizedBox(
+                            width: _minuteWidth,
+                            child: _wheel(
+                              count: _minutes.length,
+                              controller: _minuteCtrl,
+                              label: _minuteLabel,
+                              onChanged: (i) => setState(() => _minuteIndex = i),
+                            ),
+                          ),
+                          if (!_use24)
+                            SizedBox(
+                              width: _periodWidth,
+                              child: _wheel(
+                                count: 2,
+                                controller: _periodCtrl,
+                                label: (i) => i == 0 ? '上午' : '下午',
+                                onChanged: (i) => setState(() => _pm = i == 1),
+                              ),
+                            ),
+                        ],
+                      ),
                     ],
                   ),
-                ],
+                ),
               ),
             ),
             const SizedBox(height: 8),
