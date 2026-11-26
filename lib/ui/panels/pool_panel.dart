@@ -6,6 +6,7 @@ import '../app_controller.dart';
 import '../dialogs/routine_edit_dialog.dart';
 import '../dialogs/task_detail_sheet.dart';
 import '../theme.dart';
+import '../time_format.dart';
 import '../widgets/task_actions.dart';
 import '../widgets/task_selection.dart';
 import '../widgets/task_tile.dart';
@@ -259,7 +260,7 @@ class _PoolPanelState extends State<PoolPanel> {
           title: Text(row.routine.title, maxLines: 1,
               overflow: TextOverflow.ellipsis),
           subtitle: Text(
-            '${routineSubtitle(context, row.routine)} · ${_fmtDay(row.at)}',
+            '${routineSubtitle(context, row.routine)} · ${_fmtDay(context, row.at)}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -319,9 +320,9 @@ class _PoolPanelState extends State<PoolPanel> {
     await widget.controller.setPoolOrders(ids);
   }
 
-  static String _fmtDay(DateTime d) =>
+  static String _fmtDay(BuildContext context, DateTime d) =>
       '${d.month}-${d.day.toString().padLeft(2, '0')}'
-      '${d.hour == 0 && d.minute == 0 ? '' : ' ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}'}';
+      '${d.hour == 0 && d.minute == 0 ? '' : ' ${fmtClock(context, d)}'}';
 }
 
 /// 页顶那条搜索框：高度由展开进度（0–1）决定，收起时整条不挂载。
