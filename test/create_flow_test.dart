@@ -10,6 +10,8 @@ import 'package:qixing/ui/app_controller.dart';
 import 'package:qixing/ui/dialogs/create_task_sheet.dart';
 import 'package:qixing/ui/shells/android_shell.dart';
 
+import 'test_app.dart';
+
 /// 新建流程（ui-interaction.md §5.1）：**先问什么时候，再填内容**。
 ///
 /// 锁三条边界：『+』不再跳过日期直接落三无（那是它以前的默认态）；第 1 页是
@@ -39,7 +41,7 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.runAsync(controller.bootstrap);
     await tester.pumpWidget(
-      MaterialApp(home: AndroidShell(controller: controller)),
+      testApp(home: AndroidShell(controller: controller)),
     );
     await tester.pumpAndSettle();
     return controller;
@@ -227,7 +229,7 @@ void main() {
       ),
       taskDir: 'ignored',
     );
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(testApp(
       home: Scaffold(
         body: Builder(
           builder: (context) => Center(

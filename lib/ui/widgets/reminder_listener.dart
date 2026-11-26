@@ -6,7 +6,7 @@ import '../../domain/plan.dart';
 import '../app_controller.dart';
 import '../dialogs/snooze_sheet.dart';
 import '../theme.dart';
-import 'task_tile.dart';
+import '../time_format.dart';
 
 /// 提醒回流监听（§7.2）：NotificationPort 的 shown 流 / 前台轮询产出
 /// ReminderEvent → 渲染提醒弹窗（桌面 = "托盘"即应用窗口；安卓 = 前台兜底）。
@@ -82,7 +82,7 @@ class _ReminderListenerState extends State<ReminderListener> {
             Text(task.title, style: Theme.of(ctx).textTheme.titleMedium),
             const SizedBox(height: 6),
             if (task.deadline != null)
-              Text('截止 ${fmtDateTime(task.deadline!)}'),
+              Text('截止 ${fmtDateTime(ctx, task.deadline!)}'),
             // '长期'任务没有剩余工时（D18）；?? 0 只是空值安全。
             if ((task.remainingWork ?? 0) > 0)
               Text('剩余约 ${task.remainingWork} 分钟'),

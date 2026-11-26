@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../app_controller.dart';
-
-String _mm(int minuteOfDay) {
-  final h = (minuteOfDay ~/ 60).toString().padLeft(2, '0');
-  final m = (minuteOfDay % 60).toString().padLeft(2, '0');
-  return '$h:$m';
-}
+import '../time_format.dart';
+import 'time_pick.dart';
 
 const List<String> _dayNames = ['一', '二', '三', '四', '五', '六', '日'];
 
@@ -27,9 +23,10 @@ Future<void> showWorkTimeDialog(BuildContext context, AppController c) async {
 
   Future<void> pick(int index, bool isStart) async {
     final cur = windows[index][isStart ? 0 : 1];
-    final t = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(hour: cur ~/ 60, minute: cur % 60),
+    final t = await pickTime(
+      context,
+      initial: TimeOfDay(hour: cur ~/ 60, minute: cur % 60),
+      title: '工作窗',
     );
     if (t == null) return;
     final v = t.hour * 60 + t.minute;
@@ -91,7 +88,7 @@ Future<void> showWorkTimeDialog(BuildContext context, AppController c) async {
                             await pick(i, true);
                             setSheet(() {});
                           },
-                          child: Text(_mm(windows[i][0])),
+                          child: Text(fmtClockMinutes(ctx, windows[i][0])),
                         ),
                       ),
                       const Text('–'),
@@ -101,7 +98,7 @@ Future<void> showWorkTimeDialog(BuildContext context, AppController c) async {
                             await pick(i, false);
                             setSheet(() {});
                           },
-                          child: Text(_mm(windows[i][1])),
+                          child: Text(fmtClockMinutes(ctx, windows[i][1])),
                         ),
                       ),
                       IconButton(
@@ -160,8 +157,12 @@ Future<void> showWorkTimeDialog(BuildContext context, AppController c) async {
 }
 
 /// 摘要文案（设置页那一行的副标题）："周一至周五 · 09:00–12:00、13:30–18:00"。
-String workTimeSummary(List<int> days, List<List<int>> windows) {
-  final ws = windows.map((w) => '${_mm(w[0])}–${_mm(w[1])}').join('、');
+String workTimeSummary(
+    BuildContext context, List<int> days, List<List<int>> windows) {
+  final ws = windows
+      .map((w) => '${fmtClockMinutes(context, w[0])}–'
+          '${fmtClockMinutes(context, w[1])}')
+      .join('、');
   return '${describeWorkDays(days)} · $ws';
 }
 

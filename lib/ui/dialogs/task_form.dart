@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../domain/task.dart';
 import '../theme.dart';
-import '../widgets/task_tile.dart' show fmtTime;
+import '../time_format.dart';
 import 'date_pick.dart' show atDefaultHour;
 
 /// 一张表单快照：新建的第 2 页与『编辑』共用同一组字段。
@@ -312,7 +312,7 @@ class _DeadlineLabel extends StatelessWidget {
       overflow: TextOverflow.ellipsis,
     );
     final time = Text(
-      fmtTime(d),
+      fmtClock(context, d),
       style: onEditTime == null
           ? theme.textTheme.bodyMedium
           : theme.textTheme.bodyMedium?.copyWith(

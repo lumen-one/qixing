@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../app_controller.dart';
-
-String _mm(int minuteOfDay) {
-  final h = (minuteOfDay ~/ 60).toString().padLeft(2, '0');
-  final m = (minuteOfDay % 60).toString().padLeft(2, '0');
-  return '$h:$m';
-}
+import '../time_format.dart';
+import 'time_pick.dart';
 
 /// 通知时间段编辑（多段式，设置页「提醒与排序」区）：截止型任务的提醒只落在
 /// 时间段内，段外顺延到下一时段开头（不吞掉）；时点性提醒不受限制。
@@ -17,9 +13,10 @@ Future<void> showSettingsWindowsDialog(
   ];
   Future<void> pick(int index, bool isStart) async {
     final cur = windows[index][isStart ? 0 : 1];
-    final t = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(hour: cur ~/ 60, minute: cur % 60),
+    final t = await pickTime(
+      context,
+      initial: TimeOfDay(hour: cur ~/ 60, minute: cur % 60),
+      title: '通知时间段',
     );
     if (t == null) return;
     final v = t.hour * 60 + t.minute;
@@ -53,7 +50,7 @@ Future<void> showSettingsWindowsDialog(
                           await pick(i, true);
                           setSheet(() {});
                         },
-                        child: Text(_mm(windows[i][0])),
+                        child: Text(fmtClockMinutes(ctx, windows[i][0])),
                       ),
                     ),
                     const Text('–'),
@@ -63,7 +60,7 @@ Future<void> showSettingsWindowsDialog(
                           await pick(i, false);
                           setSheet(() {});
                         },
-                        child: Text(_mm(windows[i][1])),
+                        child: Text(fmtClockMinutes(ctx, windows[i][1])),
                       ),
                     ),
                     IconButton(

@@ -117,7 +117,7 @@ class _SettingsRoutinesSectionState extends State<SettingsRoutinesSection> {
         title: Text(r.title,
             style: TextStyle(
                 color: r.enabled ? null : Theme.of(context).disabledColor)),
-        subtitle: Text(routineSubtitle(r)),
+        subtitle: Text(routineSubtitle(context, r)),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

@@ -259,7 +259,7 @@ class _PoolPanelState extends State<PoolPanel> {
           title: Text(row.routine.title, maxLines: 1,
               overflow: TextOverflow.ellipsis),
           subtitle: Text(
-            '${routineSubtitle(row.routine)} · ${_fmtDay(row.at)}',
+            '${routineSubtitle(context, row.routine)} · ${_fmtDay(row.at)}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),

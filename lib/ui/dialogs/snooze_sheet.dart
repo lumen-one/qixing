@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../domain/task.dart';
 import '../app_controller.dart';
 import '../theme.dart';
+import 'time_pick.dart';
 
 /// 推迟档位（ui-interaction.md §7.2 / 决议 16/26）：
 /// 相对档位 30 分钟 / 1 小时 / 3 小时——落静默段由 NotificationWindowRule
@@ -17,9 +18,10 @@ class SnoozeSheet extends StatelessWidget {
 
   Future<void> _pickCustom(BuildContext context) async {
     final now = DateTime.now();
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(now.add(const Duration(hours: 1))),
+    final time = await pickTime(
+      context,
+      initial: TimeOfDay.fromDateTime(now.add(const Duration(hours: 1))),
+      title: '推迟到几点',
     );
     if (time == null) return;
     final until =

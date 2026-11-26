@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../domain/mainline.dart';
 import '../app_controller.dart';
 import '../theme.dart';
+import '../time_format.dart';
 import 'record_panel.dart';
 
 /// 主线覆盖页（ui-interaction.md §6.9）：**盖住整块侧边栏**（含面板头）。
@@ -721,8 +722,7 @@ class _MainlineOverlayState extends State<MainlineOverlay> {
                 Text(
                   '完成于 ${step.doneAt!.year}-${step.doneAt!.month.toString().padLeft(2, '0')}'
                   '-${step.doneAt!.day.toString().padLeft(2, '0')} '
-                  '${step.doneAt!.hour.toString().padLeft(2, '0')}:'
-                  '${step.doneAt!.minute.toString().padLeft(2, '0')}',
+                  '${fmtClock(ctx, step.doneAt!)}',
                   style: Theme.of(ctx).textTheme.labelSmall?.copyWith(
                       color: Theme.of(ctx).colorScheme.onSurfaceVariant),
                 ),
@@ -958,7 +958,7 @@ class _StepRow extends StatelessWidget {
     final theme = Theme.of(context);
     final done = step.done;
     final muted = theme.colorScheme.onSurfaceVariant;
-    final meta = _metaText();
+    final meta = _metaText(context);
     return ConstrainedBox(
       // 最短 56dp（单行标题的老样子），标题换行后行高跟着长；节点始终在第一行上。
       constraints: const BoxConstraints(minHeight: 56),
@@ -1032,14 +1032,12 @@ class _StepRow extends StatelessWidget {
     );
   }
 
-  String _metaText() {
+  String _metaText(BuildContext context) {
     final parts = <String>[];
     if (step.done) {
       final at = step.doneAt;
       if (at != null) {
-        parts.add('完成 ${at.month}月${at.day}日 '
-            '${at.hour.toString().padLeft(2, '0')}:'
-            '${at.minute.toString().padLeft(2, '0')}');
+        parts.add('完成 ${at.month}月${at.day}日 ${fmtClock(context, at)}');
       } else {
         parts.add('已完成');
       }

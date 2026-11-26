@@ -267,7 +267,7 @@ class _DayList extends StatelessWidget {
                         Icon(Icons.repeat, size: 18, color: AppColors.accent),
                     title: Text(o.routine.title, maxLines: 1,
                         overflow: TextOverflow.ellipsis),
-                    subtitle: Text(routineSubtitle(o.routine)),
+                    subtitle: Text(routineSubtitle(context, o.routine)),
                     trailing:
                         const Text('例行', style: TextStyle(fontSize: 11.5)),
                     onTap: () async {

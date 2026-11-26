@@ -10,6 +10,8 @@ import 'package:qixing/ui/app_controller.dart';
 import 'package:qixing/ui/panels/settings_panel.dart';
 import 'package:qixing/ui/theme.dart';
 
+import 'test_app.dart';
+
 /// **工作时间可编辑**（ui-interaction.md §9 第 13 条，v1.26）。
 ///
 /// 它是 slack 的分母，不是外观偏好：设置层的清洗、规则构造、以及
@@ -211,7 +213,7 @@ void main() {
         taskDir: '/tmp/tasks',
         onWorkRuleChanged: (rule) => svc.updateWorkRule(rule),
       );
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(testApp(
         theme: buildAppTheme(Brightness.light),
         home: Scaffold(body: SettingsPanel(controller: controller)),
       ));

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../domain/routine.dart';
 import '../theme.dart';
+import '../time_format.dart';
+import 'time_pick.dart';
 
 /// 周期任务规则的创建/编辑对话框（ui-interaction.md §9 第 2 条、决议 10/23）。
 /// 规则的增删改与"响不响"都在这里；实例是临时的，没有"编辑实例"。
@@ -117,8 +119,7 @@ class _RoutineEditDialogState extends State<_RoutineEditDialog> {
               title: const Text('指定时刻'),
               subtitle: Text(_time == null
                   ? '不限时刻（当天任意时候做）'
-                  : '每天 ${_time!.hour.toString().padLeft(2, '0')}:'
-                      '${_time!.minute.toString().padLeft(2, '0')}'),
+                  : '每天 ${fmtClockOf(context, _time!)}'),
               value: _time != null,
               onChanged: (on) => setState(() {
                 _time = on
@@ -132,11 +133,10 @@ class _RoutineEditDialogState extends State<_RoutineEditDialog> {
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(
                   icon: const Icon(Icons.schedule),
-                  label: Text('改时刻（${_time!.hour.toString().padLeft(2, '0')}:'
-                      '${_time!.minute.toString().padLeft(2, '0')}）'),
+                  label: Text('改时刻（${fmtClockOf(context, _time!)}）'),
                   onPressed: () async {
-                    final t = await showTimePicker(
-                        context: context, initialTime: _time!);
+                    final t = await pickTime(context,
+                        initial: _time!, title: '每天几点');
                     if (t != null) setState(() => _time = t);
                   },
                 ),
@@ -207,10 +207,10 @@ class _RoutineEditDialogState extends State<_RoutineEditDialog> {
 }
 
 /// 规则行（设置页）与实例标签共用的文案。
-String routineSubtitle(Routine r) {
+String routineSubtitle(BuildContext context, Routine r) {
   final parts = <String>[
     r.frequencyText,
-    r.timeText,
+    if (r.hasTime) fmtClockMinutes(context, r.minuteOfDay!),
     if (r.remind) '到点提醒',
   ];
   return parts.join(' · ');

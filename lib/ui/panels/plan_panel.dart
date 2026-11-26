@@ -5,7 +5,9 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import '../../application/today_view.dart';
 import '../../domain/plan.dart';
 import '../app_controller.dart';
+import '../dialogs/time_pick.dart';
 import '../theme.dart';
+import '../time_format.dart';
 import 'branch_panel.dart';
 
 /// 编排覆盖页（panels/plan.md §6.11；格式见 docs/formats/plan.md）。
@@ -339,7 +341,8 @@ class _DayTimeline extends StatefulWidget {
 }
 
 class _DayTimelineState extends State<_DayTimeline> {
-  /// 时刻列宽 + 竖线所在的空隙（竖线在两者之间）。
+  /// 时刻列宽 + 竖线所在的空隙（竖线在两者之间）。刻度固定 24 小时制，宽度
+  /// 不随系统变（理由见 [clock24]）。
   static const double _timeWidth = 46;
   static const double _railGap = 16;
   static const double _railX = _timeWidth + 8;
@@ -495,7 +498,7 @@ class _DayTimelineState extends State<_DayTimeline> {
             width: _timeWidth,
             top: 5,
             child: Text(
-              _fmtMinutes(_nowMinutes),
+              clock24(_nowMinutes),
               textAlign: TextAlign.right,
               style: TextStyle(
                 fontSize: 10.5,
@@ -593,7 +596,9 @@ class _DayTimelineState extends State<_DayTimeline> {
               child: Padding(
                 padding: const EdgeInsets.only(top: 9),
                 child: Text(
-                  entry.timeText ?? '—',
+                  entry.minutesOfDay == null
+                      ? '—'
+                      : clock24(entry.minutesOfDay!),
                   textAlign: TextAlign.right,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: timeColor,
@@ -714,7 +719,9 @@ class _DayTimelineState extends State<_DayTimeline> {
                       fontSize: 13, fontWeight: FontWeight.w600),
                 ),
                 child: Text(
-                  _draftMinutes == null ? '加时刻' : _fmtMinutes(_draftMinutes!),
+                  _draftMinutes == null
+                      ? '加时刻'
+                      : clock24(_draftMinutes!),
                   style:
                       const TextStyle(fontFeatures: [FontFeature.tabularFigures()]),
                 ),
@@ -1086,8 +1093,9 @@ class _PlanEditSheetState extends State<_PlanEditSheet> {
                 TextButton.icon(
                   onPressed: _pick,
                   icon: const Icon(Icons.schedule, size: 18),
-                  label: Text(
-                      _minutes == null ? '加个时刻' : _fmtMinutes(_minutes!)),
+                  label: Text(_minutes == null
+                      ? '加个时刻'
+                      : clock24(_minutes!)),
                 ),
                 if (_minutes != null)
                   TextButton(
@@ -1114,24 +1122,18 @@ class _PlanEditSheetState extends State<_PlanEditSheet> {
   }
 }
 
-/// 时刻选择：24 小时制，返回"当天第几分钟"。
+/// 时刻选择：返回"当天第几分钟"。
 Future<int?> pickPlanTime(BuildContext context, int? current) async {
-  final picked = await showTimePicker(
-    context: context,
-    initialTime: current == null
+  final picked = await pickTime(
+    context,
+    initial: current == null
         ? const TimeOfDay(hour: 9, minute: 0)
         : TimeOfDay(hour: current ~/ 60, minute: current % 60),
-    builder: (context, child) => MediaQuery(
-      data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
-      child: child ?? const SizedBox.shrink(),
-    ),
+    title: '几点',
   );
   if (picked == null) return null;
   return picked.hour * 60 + picked.minute;
 }
-
-String _fmtMinutes(int m) =>
-    '${(m ~/ 60).toString().padLeft(2, '0')}:${(m % 60).toString().padLeft(2, '0')}';
 
 /// 删除标记：`showModalBottomSheet` 的返回值只能用 Object 传两种结果。
 class _DeletePlanEntry {

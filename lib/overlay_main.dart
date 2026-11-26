@@ -20,6 +20,7 @@ import 'repository/markdown_routine_repository.dart';
 import 'repository/markdown_task_repository.dart';
 import 'scheduler/slack_priority_scheduler.dart';
 import 'ui/app_controller.dart';
+import 'ui/app_locale.dart';
 import 'ui/overlay/overlay_bridge.dart';
 import 'ui/overlay/overlay_panel_shell.dart';
 import 'ui/theme.dart';
@@ -210,6 +211,9 @@ class _OverlayRootState extends State<_OverlayRoot> {
       debugShowCheckedModeBanner: false,
       // 窗口是透明的：面板下面是用户当前所在的 App。
       color: Colors.transparent,
+      locale: appLocale,
+      supportedLocales: appSupportedLocales,
+      localizationsDelegates: appLocalizationsDelegates,
       theme: buildAppTheme(Brightness.light, preset: preset),
       darkTheme: buildAppTheme(Brightness.dark, preset: preset),
       themeMode: mode,

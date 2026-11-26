@@ -6,9 +6,11 @@ import '../../domain/schedule.dart';
 import '../app_controller.dart';
 import '../dialogs/settings_notes_path_dialog.dart';
 import '../dialogs/settings_windows_dialog.dart';
+import '../dialogs/time_pick.dart';
 import '../dialogs/work_time_dialog.dart';
 import '../panel_pages.dart';
 import '../theme.dart';
+import '../time_format.dart';
 import '../widgets/option_bar.dart';
 import 'settings_permissions.dart';
 import 'settings_routines.dart';
@@ -23,11 +25,6 @@ const String _feedbackQq = '3110741060';
 /// 仓库地址（§9 第 14 条）：与 QQ 同一套做法——点整行复制，不引 `url_launcher`。
 /// 行尾不写『点一下复制』：一长串地址再缀四个字，窄栏里必然折成第二行。
 const String _repoUrl = 'https://github.com/lumen-one/qixing';
-
-String _mm(int minuteOfDay) {  final h = (minuteOfDay ~/ 60).toString().padLeft(2, '0');
-  final m = (minuteOfDay % 60).toString().padLeft(2, '0');
-  return '$h:$m';
-}
 
 /// 两档调度模式的说明（决议 43 + 决定卡 mode-as-information-depth 的 10-29 修订二）：
 /// 标准 → 无排序，**逐级弱化**算法替人做主的程度，所以它们是一组二选一，
@@ -336,7 +333,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
           subtitle: Text(s.notificationWindows.isEmpty
               ? '不限制（全天送达）'
               : s.notificationWindows
-                  .map((w) => '${_mm(w[0])}–${_mm(w[1])}')
+                  .map((w) => '${fmtClockMinutes(context, w[0])}–'
+                      '${fmtClockMinutes(context, w[1])}')
                   .join('、')),
           trailing: const Icon(Icons.edit_outlined),
           onTap: () => showSettingsWindowsDialog(context, _c),
@@ -355,7 +353,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
           ListTile(
             leading: const Icon(Icons.schedule_outlined),
             title: const Text('提醒时刻'),
-            subtitle: Text('${_mm(s.dailyReminderMinutes)}，过点顺延到明天'),
+            subtitle: Text(
+                '${fmtClockMinutes(context, s.dailyReminderMinutes)}，过点顺延到明天'),
             trailing: const Icon(Icons.edit_outlined),
             onTap: () => _pickDailyReminderTime(s),
           ),
@@ -363,12 +362,13 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
   /// 收尾时刻：一天里任选，不像响铃时长那样只给几档——几点算"收尾"因人而异。
   Future<void> _pickDailyReminderTime(AppSettings s) async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(
+    final picked = await pickTime(
+      context,
+      initial: TimeOfDay(
         hour: s.dailyReminderMinutes ~/ 60,
         minute: s.dailyReminderMinutes % 60,
       ),
+      title: '每天几点提醒',
     );
     if (picked == null) return;
     await _c.updateSettings(
@@ -400,7 +400,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
         ListTile(
           leading: const Icon(Icons.work_outline),
           title: const Text('工作日与工作窗'),
-          subtitle: Text(workTimeSummary(s.workDays, s.workWindows)),
+          subtitle: Text(workTimeSummary(context, s.workDays, s.workWindows)),
           trailing: const Icon(Icons.edit_outlined),
           onTap: () => showWorkTimeDialog(context, _c),
         ),

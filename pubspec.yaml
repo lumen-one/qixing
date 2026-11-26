@@ -30,6 +30,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # 内置组件的中文资源（日期/时间选择器的月份名、按钮、上午下午）。
+  flutter_localizations:
+    sdk: flutter
 
   path_provider: ^2.1.5
   # 安卓交付类插座的适配器依赖（§4.2）：

@@ -4,13 +4,9 @@ import '../../domain/schedule.dart';
 import '../../domain/task.dart';
 import '../app_controller.dart';
 import '../theme.dart';
+import '../time_format.dart';
 
 String _two(int n) => n.toString().padLeft(2, '0');
-
-String fmtTime(DateTime d) => '${_two(d.hour)}:${_two(d.minute)}';
-
-String fmtDateTime(DateTime d) =>
-    '${d.month}-${_two(d.day)} ${_two(d.hour)}:${_two(d.minute)}';
 
 bool _sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
@@ -22,9 +18,12 @@ bool _sameDay(DateTime a, DateTime b) =>
 /// 而跨日的件真正要问的是"哪天"，几点在详情卡里看。详情卡不透传 [compact]，
 /// 所以那边同一天写成"今天"、次日写成"明天"，时刻始终带着。
 /// 跨年才补两位年：写满四位在行上占掉的宽度够写一个词。
-String fmtWhen(DateTime d, {DateTime? now, bool compact = false}) {
+///
+/// 时刻的写法由 [fmtClock] 定（跟随系统 12/24），这里只管"哪一天 + 要不要日期"。
+String fmtWhen(BuildContext context, DateTime d,
+    {DateTime? now, bool compact = false}) {
   final at = now ?? DateTime.now();
-  final clock = fmtTime(d);
+  final clock = fmtClock(context, d);
   if (_sameDay(d, at)) return compact ? clock : '今天 $clock';
   if (compact) return fmtDay(d, now: at);
   if (_sameDay(d, DateTime(at.year, at.month, at.day + 1))) return '明天 $clock';
@@ -210,7 +209,7 @@ class TaskTile extends StatelessWidget {
     final color = trailColor(context, task);
     final label = trail == TileTrail.date
         ? fmtDay(deadline)
-        : fmtWhen(deadline, compact: true);
+        : fmtWhen(context, deadline, compact: true);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [

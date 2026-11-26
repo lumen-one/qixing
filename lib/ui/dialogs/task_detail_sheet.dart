@@ -67,7 +67,8 @@ List<Widget> _when(BuildContext context, Task task) {
       TaskType.routine => '发生',
       TaskType.fixed => '开始',
     };
-    rows.add(_row(theme, color, '$label ${fmtWhen(deadline)}', color: color));
+    rows.add(_row(theme, color, '$label ${fmtWhen(context, deadline)}',
+        color: color));
   }
 
   final doneAt = task.completedAt;
@@ -76,7 +77,7 @@ List<Widget> _when(BuildContext context, Task task) {
     rows.add(_row(
       theme,
       AppColors.preset.dotsFor(theme.brightness).done,
-      '完成 ${fmtWhen(doneAt)}',
+      '完成 ${fmtWhen(context, doneAt)}',
       color: theme.colorScheme.onSurfaceVariant,
     ));
   }

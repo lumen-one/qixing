@@ -6,8 +6,8 @@ import '../../domain/task.dart';
 import '../app_controller.dart';
 import '../dialogs/task_detail_sheet.dart';
 import '../theme.dart';
+import '../time_format.dart';
 import '../widgets/task_actions.dart';
-import '../widgets/task_tile.dart' show fmtTime;
 
 /// 支线视图（panels/branch.md §6.12）：编排覆盖页的另一面。
 ///
@@ -243,7 +243,7 @@ class _BranchBoardState extends State<BranchBoard> {
     final overdue = task.deadline != null &&
         task.deadline!.isBefore(DateTime.now()) &&
         !task.isCompleted;
-    final due = branchDueLabel(task, DateTime.now());
+    final due = branchDueLabel(context, task, DateTime.now());
     final rowWidget = InkWell(
       // 点行 = 只读详情卡；改期、推迟、删除在长按菜单里（详情卡已不带动作）。
       onTap: () => showTaskDetailSheet(context, task),
@@ -773,11 +773,11 @@ class _Row {
 
 /// 今天该响的时刻（`14:30`）；没有截止 → null。支线行右侧只标"今天"的那一档，
 /// 明天以后的不标——那是编排与清单的事。
-String? branchDueLabel(Task task, DateTime now) {
+String? branchDueLabel(BuildContext context, Task task, DateTime now) {
   final d = task.deadline;
   if (d == null || task.isCompleted) return null;
   if (d.year != now.year || d.month != now.month || d.day != now.day) {
     return null;
   }
-  return fmtTime(d);
+  return fmtClock(context, d);
 }

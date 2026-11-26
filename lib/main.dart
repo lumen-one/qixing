@@ -31,6 +31,7 @@ import 'scheduler/scheduler_registry.dart';
 import 'scheduler/slack_priority_scheduler.dart';
 import 'scheduler/slack_scheduler.dart';
 import 'ui/app_controller.dart';
+import 'ui/app_locale.dart';
 import 'ui/shells/android_shell.dart';
 import 'ui/shells/desktop_shell.dart';
 import 'ui/theme.dart';
@@ -309,6 +310,9 @@ class GtdTodoApp extends StatelessWidget {
         AppColors.applyPreset(preset);
         return MaterialApp(
           title: '启行',
+          locale: appLocale,
+          supportedLocales: appSupportedLocales,
+          localizationsDelegates: appLocalizationsDelegates,
           theme: buildAppTheme(Brightness.light, preset: preset),
           darkTheme: buildAppTheme(Brightness.dark, preset: preset),
           themeMode: controller.themeMode,

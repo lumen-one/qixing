@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/task.dart';
+import 'time_pick.dart';
 
 /// 日期 + 时间的级联弹窗，任一步取消即返回 null。
 ///
@@ -21,9 +22,10 @@ Future<DateTime?> pickDateTime(
     helpText: title,
   );
   if (date == null || !context.mounted) return null;
-  final time = await showTimePicker(
-    context: context,
-    initialTime: TimeOfDay(hour: base.hour, minute: 0),
+  final time = await pickTime(
+    context,
+    initial: TimeOfDay(hour: base.hour, minute: 0),
+    title: title,
   );
   if (time == null) return null;
   return DateTime(date.year, date.month, date.day, time.hour, time.minute);

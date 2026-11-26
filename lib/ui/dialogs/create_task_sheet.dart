@@ -8,6 +8,7 @@ import '../theme.dart';
 import '../widgets/month_calendar.dart';
 import 'date_pick.dart' show atDefaultHour;
 import 'task_form.dart';
+import 'time_pick.dart';
 
 /// 新建流程：**先问什么时候，再填内容**。
 ///
@@ -91,9 +92,10 @@ class _CreateFlowSheetState extends State<_CreateFlowSheet> {
   Future<void> _pickTime() async {
     final deadline = _value.deadline;
     if (deadline == null) return;
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(hour: deadline.hour, minute: deadline.minute),
+    final picked = await pickTime(
+      context,
+      initial: TimeOfDay(hour: deadline.hour, minute: deadline.minute),
+      title: _value.type == TaskType.fixed ? '开始时间' : '截止时间',
     );
     if (picked == null || !mounted) return;
     setState(() {
