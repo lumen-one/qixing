@@ -68,10 +68,14 @@ class TodayView {
       picked == null &&
       loose.isEmpty;
 
+  /// 今日清单上要编号的条目（逾期 → 开始型 → 插队件 → 截止型；见 §1 名词表）。
+  /// [count] 与每日收尾提醒都从这里取——两边各抄一份迟早会漂。
+  List<Task> get numbered => [...overdue, ...fixed, ...pinned, ...flex];
+
   /// 今日清单上要编号的条目数（开始型组 + 截止型组 + 插队件；见 §1 名词表）。
   /// **不含提醒门槛**（v1.9）："会不会真的响"要看 `ScheduleResult` 里各任务的
   /// `reminds` / `reminderAt`——分组与编号在两种模式下完全一致，所以这里也不需要模式。
-  int get count => overdue.length + fixed.length + pinned.length + flex.length;
+  int get count => numbered.length;
 }
 
 /// 任务池条目（决议 27：计划段里任务与周期规则条目按日期混排）。

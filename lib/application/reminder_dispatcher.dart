@@ -4,15 +4,17 @@ import '../domain/event.dart';
 import '../domain/plan.dart';
 import '../domain/reminder.dart';
 import '../domain/task.dart';
+import 'daily_digest.dart';
 import 'delivery.dart';
 import 'notification_window.dart';
 import 'plan_service.dart';
+import 'settings.dart';
 import 'task_service.dart';
 
 /// 站点表协调者（§4.3）：重锚一次把能预排的站全交给 AlarmPort。
 ///
 /// 流向：TaskService 重锚（scheduleReanchored）/ PlanService 变更（changes）→
-/// alarm.cancel() → 算出三个提醒源的站点表 → alarm.scheduleStations()；
+/// alarm.cancel() → 算出四个提醒源的站点表 → alarm.scheduleStations()；
 /// alarm.fired → 按事件自己带的站点记账（没有站点身份的退回 TaskService.pollReminder）
 /// → NotificationPort.show(...) → 重锚覆盖整表。
 ///
@@ -20,18 +22,21 @@ import 'task_service.dart';
 /// 那一站。安卓把表存进原生 prefs 并逐站挂进 AlarmManager，开机自行恢复，
 /// 所以应用不在时静态站照常到点投递（docs/sockets/delivery.md）。
 ///
-/// 三个提醒源：
+/// 四个提醒源：
 /// - **Slack 软提醒**（截止型任务）：经 [windows] 送达策略（段外顺延到下一段开头）；
 /// - **时点性提醒**（开始型到点 + 设了响的周期实例 + 无排序档的两站）：原样响，
 ///   不受静默段限制；任务自己的 metadata `alarm` 打开时升级为闹钟渠道
 ///   （全屏 + 持续响铃），覆盖掉它本该走的那条通知栏投递；
 /// - **编排条目**（`编排.md` 里有时间的一行）：准点发一条静音消息，没有按钮、不升级
 ///   成闹钟、不套送达策略——它说的是"到我打算动手的点了"，不是催办
-///   （决定卡 2026-10-29-plan-reminder）。
+///   （决定卡 2026-10-29-plan-reminder）；
+/// - **每日收尾**（`daily|<yyyy-MM-dd>`）：设定时刻报一次今日清单还剩几件，
+///   一件不剩就不挂站。只排下一次、过点不补、不吃送达策略
+///   （决定卡 2026-11-26-daily-digest-reminder）。
 ///
-/// **渠道只看两件事**：这条是不是时点提醒（能不能升级成闹钟）+ 任务自己的
-/// metadata `alarm`。调度模式不参与——两档都提醒。普通提醒一律有声（通知栏 +
-/// 横幅 + 提示音 + 震动）；只有编排条目恒静音。
+/// **渠道只看三件事**：这条是不是时点提醒（能不能升级成闹钟）、任务自己的
+/// metadata `alarm`、这条是不是收尾提醒（恒普通通知）。调度模式不参与——两档都
+/// 提醒。普通提醒一律有声（通知栏 + 横幅 + 提示音 + 震动）；编排条目恒静音。
 class ReminderDispatcher {
   final TaskService service;
   final AlarmPort alarm;
@@ -48,6 +53,11 @@ class ReminderDispatcher {
 
   /// 响铃时长（秒）：设置项 `alarm_ring_seconds` 由装配点推进来，起铃那一刻才读。
   int ringSeconds;
+
+  /// 每日收尾提醒的开关与时刻（设置项 `daily_reminder_*`，装配点推进来）。
+  /// 时刻是分钟数；关掉就整条站不挂。
+  bool dailyReminderEnabled;
+  int dailyReminderMinutes;
 
   /// 本分钟已经起过闹钟的那一分钟，以及那条正文里已经列过的任务。
   /// 同一分钟的后来者只留普通通知——全屏页同一刻只能有一个抢到前台。
@@ -83,6 +93,8 @@ class ReminderDispatcher {
     this.ring,
     this.windows = NotificationWindowRule.defaultRule,
     this.ringSeconds = 60,
+    this.dailyReminderEnabled = true,
+    this.dailyReminderMinutes = defaultDailyReminderMinutes,
   }) {
     // 轮询那一侧也要按同一份规则判"能不能打扰"，否则前台 tick 会绕过静默段。
     service.updateDeliveryWindows(windows);
@@ -103,6 +115,17 @@ class ReminderDispatcher {
     if (seconds == ringSeconds) return;
     ringSeconds = seconds;
     await _reschedule();
+  }
+
+  /// 设置页改了每日收尾：换开关/时刻并重挂一次。改时刻等于换了一站，表格重建即生效；
+  /// 新时刻已经过了今天那一段就顺延到明天（过点不补）。
+  Future<void> updateDaily({required bool enabled, required int minutes}) {
+    if (enabled == dailyReminderEnabled && minutes == dailyReminderMinutes) {
+      return Future<void>.value();
+    }
+    dailyReminderEnabled = enabled;
+    dailyReminderMinutes = minutes;
+    return _reschedule();
   }
 
   Future<void> start() async {
@@ -202,7 +225,39 @@ class ReminderDispatcher {
       ));
     }
 
-    // 同一时刻只留一个站，优先级沿用旧口径：编排 → 软提醒 → 时点。
+    // 每日收尾：只挂下一次那一站。件数按**将要响的那一刻**算今日视图，明天那一站
+    // 报的是明天的清单；任务一改就随重锚重算。一件编号条目都不剩时整天不挂站。
+    if (dailyReminderEnabled) {
+      final digest = buildDailyDigest(
+        tasks: service.tasks,
+        schedule: s,
+        scheduleMode: service.scheduleMode,
+        now: current,
+        minutesOfDay: dailyReminderMinutes,
+      );
+      if (digest != null) {
+        // 撞点就往后挪一分钟：默认的 18:00 恰好也是新建截止时刻的缺省值，同一分钟
+        // 有任务闹钟不是小概率。别的源落选还有"重锚挂到 now+1s"兜底，收尾这一站
+        // 过点就顺延到明天——丢了就是整天没有，所以让它在撞点上绕开。
+        var at = digest.at;
+        var guard = 0;
+        while (candidates.any((c) => c.at == at) && guard++ < 60) {
+          at = at.add(const Duration(minutes: 1));
+        }
+        candidates.add(_StationCandidate(
+          at: at,
+          priority: 3,
+          draft: ReminderDraft(
+            taskId: dailyDigestId(at),
+            title: digest.title,
+            body: digest.body,
+            channel: ReminderChannel.ring,
+          ),
+        ));
+      }
+    }
+
+    // 同一时刻只留一个站，优先级沿用旧口径：编排 → 软提醒 → 时点 → 收尾。
     final byMoment = <int, _StationCandidate>{};
     for (final c in candidates) {
       final key = c.at.millisecondsSinceEpoch;
@@ -252,6 +307,12 @@ class ReminderDispatcher {
       if (planStation != null && !firing.delivered) {
         await _showPlan(planStation);
       }
+      // 收尾提醒没有草案可照（桌面 Timer 只回传站点 id）：按当下重算一条。
+      // 件数在到点这一刻已经全做完就什么也不弹。
+      if (isDailyDigestId(firing.taskId) && !firing.delivered) {
+        final digest = _digestNow();
+        if (digest != null) await _showDigest(digest);
+      }
       final event = await service.pollReminder();
       // delivered 说的是"刚起来的那一站已经弹过了"，不是"这一趟什么都别弹"：
       // 编排那一站弹过了，同时到点的任务提醒还没弹，所以只在任务自己那一站上跳过。
@@ -269,6 +330,11 @@ class ReminderDispatcher {
     final draft = firing.draft!;
     final at = firing.at!;
     if (isPlanReminderId(firing.taskId)) {
+      if (!firing.delivered) await _deliverDraft(draft);
+      return;
+    }
+    if (isDailyDigestId(firing.taskId)) {
+      // 收尾提醒没有账可记（同编排站）：件数已经在挂站时定稿，系统没弹成才补投。
       if (!firing.delivered) await _deliverDraft(draft);
       return;
     }
@@ -372,6 +438,36 @@ class ReminderDispatcher {
       ),
       channel: ReminderChannel.silent,
       draft: draft,
+    );
+  }
+
+  /// 收尾提醒：一条普通通知，没有按钮——没有哪一件任务可以在这里完成或推迟。
+  Future<void> _showDigest(DailyDigest digest) {
+    return notifications.show(
+      ReminderEvent(
+        firedAt: service.now(),
+        taskId: digest.id,
+        kind: ReminderKind.point,
+      ),
+      channel: ReminderChannel.ring,
+      draft: ReminderDraft(
+        taskId: digest.id,
+        title: digest.title,
+        body: digest.body,
+      ),
+    );
+  }
+
+  /// 到点这一刻重算一条收尾提醒：桌面 Timer 只回传站点 id、没有草案可照。
+  DailyDigest? _digestNow() {
+    final now = service.now();
+    return buildDailyDigest(
+      tasks: service.tasks,
+      schedule: service.lastSchedule,
+      scheduleMode: service.scheduleMode,
+      now: now,
+      minutesOfDay: dailyReminderMinutes,
+      viewAt: now, // 报此刻清单，不按下一次设定时刻的投影
     );
   }
 
@@ -486,7 +582,7 @@ class ReminderDispatcher {
       '${_two(d.month)}-${_two(d.day)} ${_two(d.hour)}:${_two(d.minute)}';
 }
 
-/// 排站时的临时候选：同一时刻按 priority 挑一个（编排 0 / 软提醒 1 / 时点 2）。
+/// 排站时的临时候选：同一时刻按 priority 挑一个（编排 0 / 软提醒 1 / 时点 2 / 收尾 3）。
 class _StationCandidate {
   final DateTime at;
   final int priority;

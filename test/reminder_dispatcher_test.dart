@@ -153,6 +153,9 @@ void main() {
       ring: ring,
       windows: windows,
       ringSeconds: ringSeconds,
+      // 每日收尾有自己的测试文件（test/daily_digest_test.dart）：这里关掉，
+      // 否则 18:00 那一站常常抢走表头，这批断言就变成在测另一条源。
+      dailyReminderEnabled: false,
     );
     await d.start();
     return d;

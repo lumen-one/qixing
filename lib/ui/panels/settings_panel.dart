@@ -341,7 +341,39 @@ class _SettingsPanelState extends State<SettingsPanel> {
           trailing: const Icon(Icons.edit_outlined),
           onTap: () => showSettingsWindowsDialog(context, _c),
         ),
+        // 每日收尾（§7.2 / 决定卡 2026-11-26）：看的是今日页的编号条目，
+        // 一件不剩就整天不响；它按设定时刻原样响，不吃上面那个通知时间段。
+        SwitchListTile(
+          secondary: const Icon(Icons.checklist_outlined),
+          title: const Text('每天提醒一次没做完的事'),
+          subtitle: const Text('到点看今日清单还剩几件；一件不剩就不响'),
+          value: s.dailyReminderEnabled,
+          onChanged: (v) =>
+              _c.updateSettings(s.copyWith(dailyReminderEnabled: v)),
+        ),
+        if (s.dailyReminderEnabled)
+          ListTile(
+            leading: const Icon(Icons.schedule_outlined),
+            title: const Text('提醒时刻'),
+            subtitle: Text('${_mm(s.dailyReminderMinutes)}，过点顺延到明天'),
+            trailing: const Icon(Icons.edit_outlined),
+            onTap: () => _pickDailyReminderTime(s),
+          ),
       ];
+
+  /// 收尾时刻：一天里任选，不像响铃时长那样只给几档——几点算"收尾"因人而异。
+  Future<void> _pickDailyReminderTime(AppSettings s) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: s.dailyReminderMinutes ~/ 60,
+        minute: s.dailyReminderMinutes % 60,
+      ),
+    );
+    if (picked == null) return;
+    await _c.updateSettings(
+        s.copyWith(dailyReminderMinutes: picked.hour * 60 + picked.minute));
+  }
 
   /// 响铃时长：三档够用，不做滑条——多一个连续旋钮就多一处"调到 47 秒有什么
   /// 区别"的疑问。

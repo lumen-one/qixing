@@ -89,6 +89,16 @@ void main() {
     expect(drawerPage(tester), PanelPage.today.index,
         reason: '今天的件定位到今日清单，不被默认页（已完成）盖掉');
   });
+
+  testWidgets('点收尾提醒：同样压过默认页，落今日清单', (tester) async {
+    final controller = await pumpShell(tester, defaultPage: 'pool');
+
+    // 收尾提醒没有具体任务可定位，只给目标页（决定卡 2026-11-26）。
+    controller.openTodayFromNotification();
+    await tester.pumpAndSettle();
+
+    expect(drawerPage(tester), PanelPage.today.index);
+  });
 }
 
 /// 内存版 SettingsPort：测试里不碰磁盘（bootstrap 只用它读一次）。

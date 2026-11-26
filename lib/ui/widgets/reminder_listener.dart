@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../application/daily_digest.dart';
 import '../../application/delivery.dart';
 import '../../domain/plan.dart';
 import '../app_controller.dart';
@@ -56,10 +57,13 @@ class _ReminderListenerState extends State<ReminderListener> {
     widget.controller.clearReminder();
     final task = widget.controller.taskById(shown.event.taskId);
     if (task == null) {
-      // 编排条目：查不到任务是对的（它本来就不是任务），照草案弹一句话。
+      // 编排条目与每日收尾：查不到任务是对的（它们本来就不是任务），照草案弹。
       final draft = shown.draft;
-      if (isPlanReminderId(shown.event.taskId) && draft != null) {
+      if (draft == null) return;
+      if (isPlanReminderId(shown.event.taskId)) {
         _showPlanDialog(draft);
+      } else if (isDailyDigestId(shown.event.taskId)) {
+        _showDigestDialog(draft);
       }
       return;
     }
@@ -140,6 +144,44 @@ class _ReminderListenerState extends State<ReminderListener> {
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 每日收尾：报件数与几个标题，唯一的去处是今日清单（决定卡 2026-11-26）。
+  void _showDigestDialog(ReminderDraft draft) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(children: [
+          Icon(Icons.checklist_outlined, color: AppColors.accent),
+          const SizedBox(width: 8),
+          const Text('收尾提醒'),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(draft.title, style: Theme.of(ctx).textTheme.titleMedium),
+            if (draft.body != null) ...[
+              const SizedBox(height: 6),
+              Text(draft.body!),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              widget.controller.openTodayFromNotification();
+            },
+            child: const Text('看今日清单'),
           ),
         ],
       ),

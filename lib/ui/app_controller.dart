@@ -124,6 +124,10 @@ class AppController extends ChangeNotifier {
   /// 不能跟着每次设置保存都推一遍。
   final void Function(WorkTimeRule rule)? onWorkRuleChanged;
 
+  /// 装配点注入的回调：**每日收尾提醒**的开关/时刻变化时同步给 ReminderDispatcher
+  /// （决定卡 2026-11-26）。它只改站点表里那一站，不动任务数据。
+  final void Function(bool enabled, int minutes)? onDailyReminderChanged;
+
   /// 最近一次要弹出来的提醒。**存整个回流对象**（不只是事件）：编排条目的 id
   /// 不是任务，UI 查不到人，只能照草案的标题渲染（`ShownNotification.draft`）。
   ShownNotification? _lastReminder;
@@ -875,6 +879,7 @@ class AppController extends ChangeNotifier {
     this.onRingSecondsChanged,
     this.onScheduleModeChanged,
     this.onWorkRuleChanged,
+    this.onDailyReminderChanged,
     Stream<ShownNotification>? notificationSurface,
   }) {
     _sub = service.events.listen((_) => notifyListeners());
@@ -972,6 +977,12 @@ class AppController extends ChangeNotifier {
     // 工时只在指纹变了时推：它会清空锚点表，跟着每次保存都推等于把提醒全部重排
     if (next.workSignature != previous.workSignature) {
       onWorkRuleChanged?.call(next.workRule);
+    }
+    // 收尾提醒改的是站点表里那一站：开关或时刻一变就重挂一次。
+    if (next.dailyReminderEnabled != previous.dailyReminderEnabled ||
+        next.dailyReminderMinutes != previous.dailyReminderMinutes) {
+      onDailyReminderChanged?.call(
+          next.dailyReminderEnabled, next.dailyReminderMinutes);
     }
   }
 
@@ -1798,6 +1809,15 @@ class AppController extends ChangeNotifier {
     _openRequestLocates = false;
     _panelOpenRequest++;
     openPlan();
+    notifyListeners();
+  }
+
+  /// 每日收尾通知被点：展开面板落今日清单（决定卡 2026-11-26）。
+  /// 没有具体任务可定位，所以只给目标页，不写 focusedTaskId。
+  void openTodayFromNotification() {
+    _focusPage = PanelPage.today.index;
+    _openRequestLocates = true;
+    _panelOpenRequest++;
     notifyListeners();
   }
 

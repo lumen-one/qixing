@@ -101,6 +101,16 @@ int clampAlarmRingSeconds(Object? raw) {
 const double defaultPanelWidth = 240;
 const double defaultPanelHeight = 425;
 
+/// **每日收尾提醒**的默认时刻：18:00（分钟数）。下班收工那一刻，"今天还剩几件"
+/// 最有意义；再晚就只剩愧疚，再早清单还没定下来（决定卡 2026-11-26）。
+const int defaultDailyReminderMinutes = 18 * 60;
+
+/// 收尾时刻：缺键 / 手改坏了都回默认，其余夹进一天之内（0 ≤ m < 1440）。
+int clampDailyReminderMinutes(Object? raw) {
+  if (raw is! num) return defaultDailyReminderMinutes;
+  return raw.toInt().clamp(0, 24 * 60 - 1).toInt();
+}
+
 /// 应用设置（ui-interaction.md §9）：调度模式、提醒时间段、定期挑、灵感路径等。
 /// application 只定义形状与缺省值；落盘走 [SettingsPort]（组装点装配，
 /// 本期实现 = 任务目录下 settings.json，Obsidian 目录里多一个文件可接受）。
@@ -257,6 +267,8 @@ class AppSettings {
     this.handleHotWidth = defaultHandleHotWidth,
     this.workDays = defaultWorkDays,
     this.workWindows = defaultWorkWindows,
+    this.dailyReminderEnabled = true,
+    this.dailyReminderMinutes = defaultDailyReminderMinutes,
   });
 
   static const AppSettings defaults = AppSettings();
@@ -284,6 +296,8 @@ class AppSettings {
     int? handleHotWidth,
     List<int>? workDays,
     List<List<int>>? workWindows,
+    bool? dailyReminderEnabled,
+    int? dailyReminderMinutes,
     bool clearNotesPath = false,
     bool clearLastPickDate = false,
   }) {
@@ -311,12 +325,28 @@ class AppSettings {
       handleHotWidth: handleHotWidth ?? this.handleHotWidth,
       workDays: workDays ?? this.workDays,
       workWindows: workWindows ?? this.workWindows,
+      dailyReminderEnabled:
+          dailyReminderEnabled ?? this.dailyReminderEnabled,
+      dailyReminderMinutes: dailyReminderMinutes ?? this.dailyReminderMinutes,
     );
   }
 
   /// 工时日历（算法入参）：由 [workDays] + [workWindows] 构造，
   /// 非法组合已在解码时夹过（见 [clampWorkDays] / [clampWorkWindows]）。
   WorkTimeRule get workRule => WorkTimeRule.fromSettings(workDays, workWindows);
+
+  /// **每日收尾提醒**开关（§7.2，默认开）：设定时刻把今日清单还剩几件报一次，
+  /// 一件不剩就不响。走站点表（第四个提醒源），口径见
+  /// `application/daily_digest.dart`，理由见决定卡 2026-11-26。
+  ///
+  /// 落 settings.json 的 `daily_reminder_enabled`；**缺键 = 开**——它是"别忘了今天还
+  /// 没做完的事"，升级后应当直接有，而不是先让人去设置里找一遍。
+  final bool dailyReminderEnabled;
+
+  /// 每日收尾的时刻（分钟数，默认 18:00）。落 `daily_reminder_minutes`，
+  /// 缺键 = [defaultDailyReminderMinutes]，读取时夹进一天之内。
+  /// 过点不补：改了时刻正好落在今天已过的那一段，就到明天才响。
+  final int dailyReminderMinutes;
 
   /// 工时指纹（变更判定）：AppController 用它决定要不要把新日历推给 TaskService
   /// ——每次设置变更都推会让锚点表白清一遍。
@@ -345,6 +375,8 @@ class AppSettings {
         'handle_hot_width': handleHotWidth,
         'work_days': workDays,
         'work_windows': workWindows,
+        'daily_reminder_enabled': dailyReminderEnabled,
+        'daily_reminder_minutes': dailyReminderMinutes,
       };
 
   factory AppSettings.fromJson(Map<String, Object?> json) {
@@ -391,6 +423,9 @@ class AppSettings {
       handleHotWidth: clampHandleHotWidth(json['handle_hot_width']),
       workDays: clampWorkDays(json['work_days']),
       workWindows: clampWorkWindows(json['work_windows']),
+      dailyReminderEnabled: json['daily_reminder_enabled'] != false,
+      dailyReminderMinutes:
+          clampDailyReminderMinutes(json['daily_reminder_minutes']),
     );
   }
 }

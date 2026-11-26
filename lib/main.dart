@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'application/branch_service.dart';
+import 'application/daily_digest.dart';
 import 'application/event_log.dart';
 import 'application/logbook_service.dart';
 import 'application/mainline_service.dart';
@@ -170,6 +171,8 @@ Future<void> main() async {
     onRingSecondsChanged: (seconds) => dispatcher.updateRingSeconds(seconds),
     onScheduleModeChanged: (mode) => service.updateScheduleMode(mode),
     onWorkRuleChanged: (rule) => service.updateWorkRule(rule),
+    onDailyReminderChanged: (enabled, minutes) =>
+        dispatcher.updateDaily(enabled: enabled, minutes: minutes),
     notificationSurface: notifications.shown,
   );
   // 灵感文件路径随设置实时生效（读写同一篇 Markdown 的正文段）。
@@ -205,6 +208,9 @@ Future<void> main() async {
     ring: ring,
     windows: NotificationWindowRule.defaultRule,
     ringSeconds: controller.settings.alarmRingSeconds,
+    // 每日收尾（决定卡 2026-11-26）：默认开、18:00；bootstrap 后再按设置推一次。
+    dailyReminderEnabled: controller.settings.dailyReminderEnabled,
+    dailyReminderMinutes: controller.settings.dailyReminderMinutes,
   );
 
   // 原生事件回流：通知按钮（含应用被杀后补做）、点通知定位、把手拖出、
@@ -221,6 +227,9 @@ Future<void> main() async {
         if (isPlanReminderId(tapped)) {
           // 编排条目没有任务 id，按任务定位只会得到"已删除"。
           controller.openPlanFromNotification();
+        } else if (isDailyDigestId(tapped)) {
+          // 收尾提醒也没有任务：落到今日清单，不定位具体某一件。
+          controller.openTodayFromNotification();
         } else {
           controller.locateTask(tapped);
         }
@@ -238,6 +247,10 @@ Future<void> main() async {
   await controller.bootstrap(); // 设置 + 周期实例 + 定期挑（system 订阅者语义）
   await dispatcher.start();
   await dispatcher.updateWindows(controller.notificationWindowRule);
+  await dispatcher.updateDaily(
+    enabled: controller.settings.dailyReminderEnabled,
+    minutes: controller.settings.dailyReminderMinutes,
+  );
 
   // 操作流水（决议 37）：`log` 数据单独一个文档 `.gtd/log.md`，append-only。
   // 走事件流订阅者（§3.3），不碰 TaskService。
