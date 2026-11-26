@@ -66,8 +66,11 @@ import 矩阵由 `test/architecture_test.dart` 守着，改跨层引用会直接
 ## 出 release
 
 1. 改 `pubspec.yaml` 的 `version`（`1.0.0+1` 里 `+1` 是 versionCode，每次发版必须加）。
-2. 构建：`flutter build apk --release --split-per-abi`，产物在 `build/app/outputs/flutter-apk/`
-   三个按架构拆的包（十来兆一个，比通用包小一多半）。
+2. 构建：`tool/build_apk.sh`，产物在 `build/app/outputs/flutter-apk/`，三个按架构拆的包
+   （十来兆一个，比通用包小一多半），脚本会顺手打印各自的 versionCode。
+   别用 `flutter build apk` 裸命令、`--target-platform` 单包构建或 IDE 的 Build APK：
+   那几条路不给 versionCode 加 ABI 前缀，出的是底数本身（20xx），装过 split 包（40xx）
+   之后会被判降级，覆盖安装失败。
 3. 打标签并推送：`git tag -a v1.0.0 -m "…" && git push origin main --tags`。
 4. 到 GitHub Releases 挂附件（网页点，或用 API `POST /repos/<owner>/<repo>/releases` 再往
    `uploads.github.com` 传二进制）。
