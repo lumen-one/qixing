@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 
 import '../app_controller.dart';
 import '../dialogs/calendar_dialog.dart';
@@ -195,7 +196,7 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
       _warm = false;
       setState(() => _dragProgress = _progressFor(e.dx));
     } else if (e is PanelDragEnd) {
-      _settle(e.open);
+      _settle(e.open, velocity: e.velocity);
     } else if (e is PanelWarmup) {
       // 原生在按下把手时就把窗口挂上了（屏外、不接触摸，§6.0）：这里把树建起来，
       // 真拉开时只是现有树上的 setState。准备动作与第一次 progress 完全一致
@@ -257,13 +258,45 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
   }
 
   /// 松手：从当前进度补满（开）或滑回（关）。
-  void _settle(bool open) {
-    final start = _dragProgress ?? (open ? 1.0 : 0.0);
+  ///
+  /// [velocity] 是原生送来的横向速度（逻辑像素/秒，朝屏内为正）。除以面板宽得到
+  /// "每秒推进多少 progress"，交给临界阻尼弹簧当初始速度——甩着松手，面板接着
+  /// 那个速度走完；拖到一半停住再松手（速度≈0）仍走固定时长的缓出。
+  ///
+  /// 用弹簧而不是统一时长，是因为"甩"和"拖到一半放开"本来就该有快慢差别：
+  /// 原来两者共用 60–220ms 的缓出，甩得再快也是从该曲线的起点重新起步，
+  /// 松手那一帧必然一顿。
+  void _settle(bool open, {double velocity = 0}) {
+    final start = (_dragProgress ?? (open ? 1.0 : 0.0)).clamp(0.0, 1.0);
     _settleOpen = open;
-    _settleCtrl.value = start.clamp(0.0, 1.0);
-    _settleCtrl.duration = Duration(
-        milliseconds: (60 + 140 * (1 - start).abs()).round().clamp(60, 220));
-    _settleCtrl.animateTo(open ? 1.0 : 0.0, curve: Curves.easeOutCubic);
+    final target = open ? 1.0 : 0.0;
+    final width =
+        panelWidthFor(_c.settings, MediaQuery.of(context).size.width);
+    final v = width <= 0 ? 0.0 : (velocity / width).clamp(-10.0, 10.0);
+    // 只接"朝目标方向"的速度。反向甩（拖过了又回抽）若照物理算，面板会先退
+    // 一段再回来——判定在松手那一刻已经定了，收尾不该再犹豫。
+    final grab = v * (target - start).sign > 0 ? v : 0.0;
+    _settleCtrl.stop();
+    _settleCtrl.value = start;
+    if ((start - target).abs() < 0.002 || grab.abs() < 0.05) {
+      // 静止松手：没有可接的速度，走缓出。时长下限拉到 120ms——原来 60ms 起，
+      // 快拖到头（start≈0.9）松手只剩二十来 dp，几乎是一帧跳过去的。
+      _settleCtrl.duration = Duration(
+          milliseconds: (120 + 100 * (1 - start).abs()).round().clamp(120, 220));
+      _settleCtrl.animateTo(target, curve: Curves.easeOutCubic);
+      return;
+    }
+    _settleCtrl.animateWith(SpringSimulation(
+      // 临界阻尼（ζ=1）：收到终点即停，不越过、不回弹。初速上限 10 progress/s
+      // 远小于 ω 乘剩余距离，正常手势下不会冲过终点。
+      const SpringDescription(mass: 1, stiffness: 600, damping: 49),
+      start,
+      target,
+      grab,
+      // 判"停下"的阈值放宽到半 dp 级：弹簧的尾巴很长，按默认 1e-3 收，
+      // 最后那一个看不见的像素会多爬一百多毫秒，反而显得粘。
+      tolerance: const Tolerance(distance: 0.004, velocity: 0.05),
+    ));
   }
 
   void _onSettleTick() {
@@ -366,9 +399,9 @@ class _OverlayPanelShellState extends State<OverlayPanelShell>
         body: IgnorePointer(
           ignoring: _quickDrag,
           // 预热态（§6.0）：树照建、布局照走，但**一个像素都不许露**。
-          // progress=0 时面板只滑到"贴着屏边"（`right: 6 - 宽` 里的 6 是展开态的
-          // 贴边空隙），面板左缘落在屏内 6dp，加一层朝左 18dp 的阴影；原来那一帧
-          // 紧跟着 removeView，看不见；现在窗口留着，它就成了一条"收起来了还在"的边。
+          // progress=0 时面板本体已经滑到屏幕外沿（贴边那 6dp 随进度收掉了），
+          // 只剩朝左那圈阴影还压在屏内；原来那一帧紧跟着 removeView，看不见，
+          // 现在窗口留着，它就成了一条"收起来了还在"的浅影。
           child: Opacity(
             opacity: _warm ? 0 : 1,
             child: AnimatedOpacity(

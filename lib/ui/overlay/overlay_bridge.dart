@@ -37,9 +37,13 @@ class OverlayBridge {
         _drags.add(PanelDragProgress((m['dx'] as num?)?.toDouble() ?? 0));
       }
       // 松手：open = 原生判定补满全开（否则滑回屏外后调 collapse）。
+      // velocity = 松手瞬间朝屏内的横向速度（逻辑像素/秒），收尾弹簧拿它当初速度。
       if (call.method == 'panelDragEnd' && call.arguments is Map) {
         final m = Map<String, Object?>.from(call.arguments as Map);
-        _drags.add(PanelDragEnd(m['open'] == true));
+        _drags.add(PanelDragEnd(
+          m['open'] == true,
+          velocity: (m['velocity'] as num?)?.toDouble() ?? 0,
+        ));
       }
       // 快记（§6.8）：进方块态 / 回拖取消。
       if (call.method == 'quickNoteStart') _drags.add(const QuickNoteStart());
@@ -123,7 +127,13 @@ class PanelDragProgress extends OverlayDragEvent {
 class PanelDragEnd extends OverlayDragEvent {
   final bool open;
 
-  const PanelDragEnd(this.open);
+  /// 松手瞬间朝屏内的横向速度（逻辑像素/秒）。
+  ///
+  /// 补满 / 滑回按它跑弹簧，手指甩过来时面板接得上速度，不会在松手那一帧
+  /// "一顿"重新起步。老原生或测试没带这个字段 = 0（退回固定时长的缓出）。
+  final double velocity;
+
+  const PanelDragEnd(this.open, {this.velocity = 0});
 }
 
 /// 进了快记态：把手窗口已变成跟手方块，面板要让位（ui-interaction.md §6.8）。

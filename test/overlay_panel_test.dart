@@ -449,6 +449,39 @@ void main() {
     expect(calls.map((c) => c.method), isNot(contains('collapse')));
   });
 
+  testWidgets('panelDragEnd 带速度：只改收尾节奏，不改判定与终点', (tester) async {
+    // 原生松手时把横向速度送过来（逻辑像素/秒）。速度接的是收尾动画的初速度：
+    // 方向与判定一致时才用，反向（拖过了又回抽）按静止处理——不能因为
+    // 弹簧的物理把已经定下来的去留再走回去。
+    final controller = makeController();
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(size: Size(800, 600)),
+      child: MaterialApp(
+        home:
+            OverlayPanelShell(controller: controller, bridge: OverlayBridge()),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    sendOverlayCall(const MethodCall('panelDrag', {'dx': 120.0}));
+    await tester.pumpAndSettle();
+    // open=true 但手指正在往外回抽：仍然补满，停在展开位。
+    sendOverlayCall(
+        const MethodCall('panelDragEnd', {'open': true, 'velocity': -4000.0}));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('今日清单')).dx, closeTo(564, 1));
+    expect(calls.map((c) => c.method), isNot(contains('collapse')));
+
+    // open=false 但手指往里甩：仍然滑回屏外，播完才摘窗口。
+    sendOverlayCall(const MethodCall('panelDrag', {'dx': 60.0}));
+    await tester.pumpAndSettle();
+    calls.clear();
+    sendOverlayCall(
+        const MethodCall('panelDragEnd', {'open': false, 'velocity': 4000.0}));
+    await tester.pumpAndSettle();
+    expect(calls.map((c) => c.method), contains('collapse'));
+  });
+
   testWidgets('尺寸固定后拖面板内把手：过半即缩回（走 collapse 摘窗口）',
       (tester) async {
     final controller = makeController(

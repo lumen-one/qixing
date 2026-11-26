@@ -1335,6 +1335,9 @@ class _PanelResizeEdge extends StatelessWidget {
 /// 与安卓壳共用同一份 [SidePanel]；差别只在宿主容器：
 /// 这里的面板浮在其他 App 之上（窗口背景透明），点遮罩即收起。
 class FloatingPanel extends StatelessWidget {
+  /// 展开态面板与屏幕边缘之间留的空隙。
+  static const double _edgeInset = 6;
+
   final AppController controller;
   final PageController pageCtrl;
   final VoidCallback onCollapse;
@@ -1379,6 +1382,11 @@ class FloatingPanel extends StatelessWidget {
     // 拖拽，两边不会不一致。
     final slide =
         (1 - p) * panelWidthFor(controller.settings, MediaQuery.of(context).size.width);
+    // 贴边那 6dp 是展开态留的空隙；滑回时跟着进度一起收掉——否则 progress=0
+    // 时面板左缘还停在屏内 6dp（外面还有一圈朝左的阴影），而原生这时把窗口
+    // 留着预热，就成了"收起来了还在的一条边"。收到 0 时右缘正好在屏幕外沿。
+    final retract = _edgeInset * (1 - (p / 0.25).clamp(0.0, 1.0));
+    final edge = _edgeInset - retract;
     return Stack(
       children: [
         // 遮罩：点空白处收起（下面是别的 App，只压一层浅色）。
@@ -1394,8 +1402,8 @@ class FloatingPanel extends StatelessWidget {
         ),
         Positioned(
           top: MediaQuery.of(context).padding.top + 8,
-          left: dockLeft ? 6 - slide : null,
-          right: dockLeft ? null : 6 - slide,
+          left: dockLeft ? edge - slide : null,
+          right: dockLeft ? null : edge - slide,
           // 宽高由 ResizablePanel 自算（设置值 / 默认公式 / 拖拽实时值），
           // 这里只给停靠侧与顶部 inset，不设 width/height/bottom。
           child: ResizablePanel(

@@ -1,5 +1,8 @@
 package com.lumenone.qixing
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -23,6 +26,7 @@ import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.TextView
 import io.flutter.FlutterInjector
@@ -176,6 +180,21 @@ class OverlayHandleService : Service() {
          * 的 72dp。快甩另算（见 [FLING_VELOCITY]），不必拖这么远。
          */
         private const val PULL_OPEN_DP = 72
+
+        /**
+         * 推过上限之后的阻尼强度（§6.0）：额外位移按 `scale·o/(o+scale)` 收，
+         * `scale = cap × 这个比例`。
+         *
+         * 这条曲线在 o=0 处的斜率仍是 1——推过上限的第一像素与跟手同速，不会
+         * "一顿"；越推越涩，位移渐近 `cap × (1 + ratio)`。数值压得小是有意的：
+         * 拖到面板宽时条已经压在面板左缘上（面板窗口在它上面），再走远只剩
+         * "松手后要滑回来的路"变长，看不见、白费。默认面板宽 240dp → 额外
+         * 最多约 34dp。
+         */
+        private const val PULL_OVERRUN_RATIO = 0.14f
+
+        /** 松手后把手滑回贴边的时长（ms）：与 Dart 侧面板滑回同节奏，不瞬跳。 */
+        private const val HANDLE_BACK_MS = 220L
 
         /** 把手横移上限（占屏宽的比例）：**分岔点**，不是终点（§6.8）。 */
         private const val PULL_MAX_FRACTION = 0.45f
@@ -440,6 +459,17 @@ class OverlayHandleService : Service() {
     /** 当前朝屏内的拖动距离（px，≥0）。 */
     private var pullDx = 0f
 
+    /**
+     * 本次手势是否已经为"越过 [PULL_OPEN_DP]"震过——一次手势只震一下。
+     *
+     * 过线时给一次 `CLOCK_TICK`：72dp 那一点的遮罩才 7.5% 不透明度，光看面板
+     * 深浅判断"松手会不会开"太费劲。
+     */
+    private var pullTickFired = false
+
+    /** 松手后把手归位的动画（[animateHandleBack]）；null = 没在跑。 */
+    private var handleBackAnimator: ValueAnimator? = null
+
     // ------------------------------------------------------- 快记（§6.8）
 
     /** 已过 [PULL_MAX_FRACTION] 分岔点（本次手势内）。 */
@@ -602,6 +632,10 @@ class OverlayHandleService : Service() {
         // 这个 handler 上挂的都是本服务自己的活（长按、滑回兜底、预热闹钟、
         // 状态补发）：服务没了就一起撤掉，别让预热在死掉的服务上建引擎。
         mainHandler.removeCallbacksAndMessages(null)
+        handleBackAnimator?.let { anim ->
+            handleBackAnimator = null
+            anim.cancel()
+        }
         removePanel()
         destroyOverlayEngine()
         removeHandle()
@@ -750,6 +784,11 @@ class OverlayHandleService : Service() {
 
     /** 重新贴边 + 夹紧 y（旋屏、换边、拖拽结束都走它）。 */
     private fun relayout() {
+        // 归位动画还没跑完就要贴边（旋屏、换边、又开始拖）：先停掉，免得两处抢 x。
+        handleBackAnimator?.let { anim ->
+            handleBackAnimator = null
+            anim.cancel()
+        }
         val wm = windowManager ?: return
         val view = handleView ?: return
         val params = layoutParams ?: return
@@ -897,6 +936,12 @@ class OverlayHandleService : Service() {
                         pastSplit = false
                         pastSplitPanel = false
                         splitDy = 0f
+                        pullTickFired = false
+                        // 上一次松手的归位动画可能还在跑：立刻停，别和这次跟手抢 x。
+                        handleBackAnimator?.let { anim ->
+                            handleBackAnimator = null
+                            anim.cancel()
+                        }
                         touching = true
                         // event.x/y 是**视图自身坐标系**：白条在热区里的位置按它算。
                         downOnBar = isOnBar(v, event.x, event.y)
@@ -930,6 +975,12 @@ class OverlayHandleService : Service() {
                         }
                         if (pulling) {
                             val inward = inwardDx(dx)
+                            // 越过判定线：一次轻震，"松手就开"不用再靠猜。
+                            if (!pullTickFired && inward >= PULL_OPEN_DP * density) {
+                                pullTickFired = true
+                                v.performHapticFeedback(
+                                    HapticFeedbackConstants.CLOCK_TICK)
+                            }
                             if (quickNote) {
                                 // 方块跟指尖（二维）：进入时已经在窗口上设好尺寸。
                                 moveQuickBox(wm, event.rawX, event.rawY)
@@ -1005,7 +1056,17 @@ class OverlayHandleService : Service() {
                         }
                         if (pulling) {
                             // 松手定去留：拖过 72dp / 快甩过 24dp = 展开，否则滑回。
-                            endPull(shouldOpenPull(dx) && !longPressed)
+                            // **必须先 compute**：VelocityTracker 要算一次才有 xVelocity，
+                            // 不算就是 0——"快甩 24dp"那条判定从来没生效过。
+                            val tracker = velocityTracker
+                            tracker?.computeCurrentVelocity(1000) // px/s
+                            // 速度一并交给 Dart——补满/滑回按它跑弹簧，接得上手势。
+                            val vx = tracker?.xVelocity ?: 0f
+                            val inwardV = if (dockedRight) -vx else vx
+                            endPull(
+                                open = shouldOpenPull(dx) && !longPressed,
+                                velocity = inwardV / density,
+                            )
                             velocityTracker?.recycle()
                             velocityTracker = null
                             return true
@@ -1077,11 +1138,29 @@ class OverlayHandleService : Service() {
         } else {
             pullSplitPx(wm).toFloat()
         }
-        pullDx = inward.coerceIn(0f, cap)
+        // 推过上限不再硬夹：按 [overrunDistance] 渐近，越推越涩（§6.0）。
+        pullDx = if (inward <= cap) {
+            inward.coerceAtLeast(0f)
+        } else {
+            cap + overrunDistance(inward - cap, cap)
+        }
         if (wm != null) {
             params.x = edgeX(wm) + (if (dockedRight) -pullDx else pullDx).toInt()
         }
         updateView(v, params)
+    }
+
+    /**
+     * 推过上限之后的额外位移：`scale·o/(o+scale)`，在 o=0 处斜率为 1。
+     *
+     * 初段与跟手同速（不会一过上限就"粘住"），之后渐近 `scale`
+     * （= [PULL_OVERRUN_RATIO] × 上限）。上限为 0 时（面板宽还没报来、屏也畸形）
+     * 直接返回 0，不做除法。
+     */
+    private fun overrunDistance(over: Float, cap: Float): Float {
+        if (over <= 0f || cap <= 0f) return 0f
+        val scale = cap * PULL_OVERRUN_RATIO
+        return scale * over / (over + scale)
     }
 
     /** 朝屏内的方向：贴右时是负 dx，贴左时是正 dx。 */
@@ -1090,24 +1169,78 @@ class OverlayHandleService : Service() {
     /**
      * 松手：补满全开（[open]）或滑回屏外。
      *
+     * [velocity] 是松手瞬间朝屏内的横向速度（逻辑像素/秒），交给 Dart 决定
+     * 收尾动画的初速度；这里只负责把手自己回去。
+     *
      * 滑回时面板窗口还挂着——Dart 播完"滑回屏外"的动画才会调 `collapse` 来摘，
      * 这里挂一个兜底 Runnable，防 Dart 没回复时窗口常驻盖住下面的 App。
      */
-    private fun endPull(open: Boolean) {
+    private fun endPull(open: Boolean, velocity: Float = 0f) {
         val wasTracking = pullTracking
         pulling = false
         pullTracking = false
-        // 把手回贴边缘（展开时反正要隐藏）；y 夹紧并落盘。
-        relayout()
+        val backFrom = pullDx
+        pullDx = 0f
         if (open) {
+            // 把手马上要被藏起来：直接归位，不为看不见的东西播动画。
+            relayout()
             // 面板窗口已在（wasTracking）或现场补（引擎没就绪的首轮）。
             expandPanel()
-            if (wasTracking) sendPullEnd(open = true)
-        } else if (wasTracking) {
-            sendPullEnd(open = false)
-            mainHandler.removeCallbacks(pullCloseFallback)
-            mainHandler.postDelayed(pullCloseFallback, PULL_CLOSE_FALLBACK_MS)
+            if (wasTracking) sendPullEnd(open = true, velocity = velocity)
+        } else {
+            // 条跟着面板一起回去，别在松手这一帧跳回贴边（§6.0）。
+            animateHandleBack(backFrom)
+            if (wasTracking) {
+                sendPullEnd(open = false, velocity = velocity)
+                mainHandler.removeCallbacks(pullCloseFallback)
+                mainHandler.postDelayed(pullCloseFallback, PULL_CLOSE_FALLBACK_MS)
+            }
         }
+    }
+
+    /**
+     * 把手从 [from]（px，朝屏内）滑回贴边。
+     *
+     * 与 Dart 侧的面板滑回同一段节奏（[HANDLE_BACK_MS] 的减速曲线）：松手时面板
+     * 还在屏内，把手却已经"啪"地回到边上，是松手那一瞬最容易被看见的跳变。
+     * [from] 小于 1px 时没有可看的东西，直接走 [relayout]。
+     */
+    private fun animateHandleBack(from: Float) {
+        handleBackAnimator?.let { anim ->
+            handleBackAnimator = null
+            anim.cancel()
+        }
+        val wm = windowManager
+        val view = handleView
+        val params = layoutParams
+        if (wm == null || view == null || params == null || from < 1f) {
+            relayout()
+            return
+        }
+        val edge = edgeX(wm)
+        val sign = if (dockedRight) -1f else 1f
+        val anim = ValueAnimator.ofFloat(from, 0f)
+        anim.duration = HANDLE_BACK_MS
+        anim.interpolator = DecelerateInterpolator(1.8f)
+        anim.addUpdateListener { a ->
+            val dx = a.animatedValue as Float
+            params.x = edge + (sign * dx).toInt()
+            try {
+                windowManager?.updateViewLayout(view, params)
+            } catch (t: Throwable) {
+                Log.w(TAG, "handle back layout failed: ${t.message}")
+            }
+        }
+        anim.addListener(object : AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: Animator) {
+                // 被别处 cancel / 换成新动画时不管：那时 x 已经归新的那段管。
+                if (handleBackAnimator !== animation) return
+                handleBackAnimator = null
+                relayout()
+            }
+        })
+        handleBackAnimator = anim
+        anim.start()
     }
 
     /** 拖动进度 → Dart：dx = 手指距贴边位置的逻辑像素（朝屏内为正）。 */
@@ -1121,10 +1254,18 @@ class OverlayHandleService : Service() {
         }
     }
 
-    /** 松手判定 → Dart：open = 补满全开（否则 Dart 滑回屏外后调 collapse）。 */
-    private fun sendPullEnd(open: Boolean) {
+    /**
+     * 松手判定 → Dart：open = 补满全开（否则 Dart 滑回屏外后调 collapse）。
+     *
+     * [velocity] 单位是逻辑像素/秒、朝屏内为正；Dart 除以面板宽得到"每秒推进
+     * 多少 progress"，用作收尾弹簧的初速度。
+     */
+    private fun sendPullEnd(open: Boolean, velocity: Float = 0f) {
         try {
-            overlayChannel?.invokeMethod("panelDragEnd", mapOf("open" to open))
+            overlayChannel?.invokeMethod(
+                "panelDragEnd",
+                mapOf("open" to open, "velocity" to velocity.toDouble()),
+            )
         } catch (t: Throwable) {
             Log.w(TAG, "panelDragEnd delivery failed: ${t.message}")
         }
